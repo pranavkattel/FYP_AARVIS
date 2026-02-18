@@ -1,0 +1,8 @@
+Conversation History:
+Human: hello
+AI: Hello. How can I help you today?
+Human: my name is pranav
+AI: Hello Pranav, what's on your mind today? Is there something I can help you with or would you like to talk about something in particular?
+Human: whats my name
+AI: Your name is Pranav.
+End of Conversation

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Smart Mirror</title>
+    <link rel="stylesheet" href="/static/css/auth.css">
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-box register-box">
+            <div class="auth-hero">
+                <div class="hero-text">
+                    <h2>Join the Smart<br>Mirror Experience</h2>
+                    <p>Personalize your digital life with AI-powered insights</p>
+                </div>
+            </div>
+            
+            <div class="auth-form-section">
+                <h1>Create Account</h1>
+                <p class="subtitle">Already have an account? <a href="/login">Sign in</a></p>
+                
+                <form id="registerForm" onsubmit="handleRegister(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="fullName">Full Name *</label>
+                            <input type="text" id="fullName" name="fullName" placeholder="Your Name" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="username">Username *</label>
+                            <input type="text" id="username" name="username" placeholder="pranavkattel" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="email">Email *</label>
+                        <input type="email" id="email" name="email" placeholder="pranav@example.com" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="password">Password *</label>
+                            <input type="password" id="password" name="password" placeholder="Min. 6 characters" required minlength="6">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="confirmPassword">Confirm Password *</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" placeholder="Re-enter password" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="location">Your City (Optional)</label>
+                        <select id="location" name="location">
+                            <option value="">Select your city</option>
+                            <optgroup label="Popular Cities">
+                                <option value="Kathmandu">Kathmandu, Nepal</option>
+                                <option value="New York">New York, USA</option>
+                                <option value="London">London, UK</option>
+                                <option value="Tokyo">Tokyo, Japan</option>
+                                <option value="Paris">Paris, France</option>
+                                <option value="Sydney">Sydney, Australia</option>
+                                <option value="Dubai">Dubai, UAE</option>
+                                <option value="Singapore">Singapore</option>
+                                <option value="Mumbai">Mumbai, India</option>
+                                <option value="Toronto">Toronto, Canada</option>
+                            </optgroup>
+                            <optgroup label="Asia">
+                                <option value="Bangkok">Bangkok, Thailand</option>
+                                <option value="Beijing">Beijing, China</option>
+                                <option value="Seoul">Seoul, South Korea</option>
+                                <option value="Hong Kong">Hong Kong</option>
+                                <option value="Kuala Lumpur">Kuala Lumpur, Malaysia</option>
+                                <option value="Manila">Manila, Philippines</option>
+                                <option value="Jakarta">Jakarta, Indonesia</option>
+                                <option value="Delhi">Delhi, India</option>
+                            </optgroup>
+                            <optgroup label="Europe">
+                                <option value="Berlin">Berlin, Germany</option>
+                                <option value="Madrid">Madrid, Spain</option>
+                                <option value="Rome">Rome, Italy</option>
+                                <option value="Amsterdam">Amsterdam, Netherlands</option>
+                                <option value="Vienna">Vienna, Austria</option>
+                                <option value="Prague">Prague, Czech Republic</option>
+                                <option value="Stockholm">Stockholm, Sweden</option>
+                            </optgroup>
+                            <optgroup label="Americas">
+                                <option value="Los Angeles">Los Angeles, USA</option>
+                                <option value="Chicago">Chicago, USA</option>
+                                <option value="San Francisco">San Francisco, USA</option>
+                                <option value="Miami">Miami, USA</option>
+                                <option value="Vancouver">Vancouver, Canada</option>
+                                <option value="Mexico City">Mexico City, Mexico</option>
+                                <option value="São Paulo">São Paulo, Brazil</option>
+                                <option value="Buenos Aires">Buenos Aires, Argentina</option>
+                            </optgroup>
+                            <optgroup label="Middle East & Africa">
+                                <option value="Cairo">Cairo, Egypt</option>
+                                <option value="Cape Town">Cape Town, South Africa</option>
+                                <option value="Nairobi">Nairobi, Kenya</option>
+                                <option value="Tel Aviv">Tel Aviv, Israel</option>
+                                <option value="Riyadh">Riyadh, Saudi Arabia</option>
+                            </optgroup>
+                            <optgroup label="Oceania">
+                                <option value="Melbourne">Melbourne, Australia</option>
+                                <option value="Auckland">Auckland, New Zealand</option>
+                                <option value="Brisbane">Brisbane, Australia</option>
+                            </optgroup>
+                        </select>
+                        <small>Choose your city for accurate weather updates (you can skip this)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Interests (Optional)</label>
+                        <small style="margin-bottom: 10px; display: block;">Select topics you're interested in for personalized news</small>
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="tech" value="technology">
+                                <label for="tech">Technology</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="business" value="business">
+                                <label for="business">Business</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="sports" value="sports">
+                                <label for="sports">Sports</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="health" value="health">
+                                <label for="health">Health</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="science" value="science">
+                                <label for="science">Science</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="entertainment" value="entertainment">
+                                <label for="entertainment">Entertainment</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Face Registration Section -->
+                    <div class="form-group" id="faceRegistrationSection" style="display: none;">
+                        <label>📷 Register Your Face (Optional but Recommended)</label>
+                        <small style="margin-bottom: 10px; display: block;">This allows the mirror to recognize you and show personalized content</small>
+                        <div style="text-align: center; margin: 15px 0;">
+                            <video id="faceVideo" width="320" height="240" autoplay style="border-radius: 10px; display: none; transform: scaleX(-1);"></video>
+                            <div id="faceProgress" style="margin-top: 10px; color: #667eea; font-weight: bold;"></div>
+                            <div id="faceInstruction" style="margin-top: 10px; color: #666; font-size: 14px;"></div>
+                        </div>
+                        <button type="button" id="startFaceRegistration" class="btn-secondary" onclick="startFaceCapture()">Start Face Registration</button>
+                        <button type="button" id="skipFaceRegistration" class="btn-secondary" onclick="skipFaceCapture()" style="display: none;">Skip Face Registration</button>
+                    </div>
+                    
+                    <div id="errorMessage" class="error-message"></div>
+                    
+                    <button type="submit" class="btn-primary" id="submitButton">Create Account</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let faceEmbeddings = [];
+        let captureCount = 0;
+        const targetCaptures = 25;
+        let stream = null;
+        let isCapturing = false;
+        const directions = ["Look at camera", "Turn LEFT", "Turn RIGHT", "Look UP", "Look DOWN", "Smile", "Neutral"];
+        let directionIndex = 0;
+
+        // Show face registration section when form is filled
+        document.getElementById('registerForm').addEventListener('input', function() {
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (username && email && password) {
+                document.getElementById('faceRegistrationSection').style.display = 'block';
+            }
+        });
+
+        async function startFaceCapture() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                const video = document.getElementById('faceVideo');
+                video.srcObject = stream;
+                video.style.display = 'block';
+                video.play();
+                
+                document.getElementById('startFaceRegistration').style.display = 'none';
+                document.getElementById('skipFaceRegistration').style.display = 'inline-block';
+                document.getElementById('submitButton').disabled = true;
+                
+                isCapturing = true;
+                captureCount = 0;
+                faceEmbeddings = [];
+                
+                updateFaceInstruction();
+                
+                // Start capturing after 1 second
+                setTimeout(captureFrame, 1000);
+            } catch (error) {
+                alert('Camera access denied. Face registration will be skipped.');
+                skipFaceCapture();
+            }
+        }
+
+        function updateFaceInstruction() {
+            document.getElementById('faceInstruction').textContent = directions[directionIndex % directions.length];
+            document.getElementById('faceProgress').textContent = `Captured: ${captureCount}/${targetCaptures}`;
+        }
+
+        async function captureFrame() {
+            if (!isCapturing || captureCount >= targetCaptures) {
+                if (captureCount >= targetCaptures) {
+                    completeFaceCapture();
+                }
+                return;
+            }
+
+            const video = document.getElementById('faceVideo');
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 480;
+            canvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+            
+            const imageData = canvas.toDataURL('image/jpeg', 0.7);
+            
+            // Send to server for processing
+            try {
+                const response = await fetch('/api/face/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageData })
+                });
+                
+                const data = await response.json();
+                
+                if (data.embedding) {
+                    faceEmbeddings.push(data.embedding);
+                    captureCount++;
+                    directionIndex++;
+                    updateFaceInstruction();
+                }
+            } catch (error) {
+                console.error('Face capture error:', error);
+            }
+            
+            // Capture next frame after 500ms
+            setTimeout(captureFrame, 500);
+        }
+
+        function completeFaceCapture() {
+            isCapturing = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('faceVideo').style.display = 'none';
+            document.getElementById('faceProgress').textContent = '✅ Face registration complete!';
+            document.getElementById('faceInstruction').textContent = 'You can now create your account';
+            document.getElementById('skipFaceRegistration').style.display = 'none';
+            document.getElementById('submitButton').disabled = false;
+        }
+
+        function skipFaceCapture() {
+            isCapturing = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('faceVideo').style.display = 'none';
+            document.getElementById('faceProgress').textContent = 'Face registration skipped';
+            document.getElementById('faceInstruction').textContent = 'You can add face later in settings';
+            document.getElementById('startFaceRegistration').style.display = 'inline-block';
+            document.getElementById('skipFaceRegistration').style.display = 'none';
+            document.getElementById('submitButton').disabled = false;
+            faceEmbeddings = [];
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            
+            const fullName = document.getElementById('fullName').value;
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const location = document.getElementById('location').value || 'Kathmandu'; // Default if not selected
+            const errorMsg = document.getElementById('errorMessage');
+            
+            // Get selected interests
+            const interestCheckboxes = document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked');
+            const interests = Array.from(interestCheckboxes).map(cb => cb.value).join(', ');
+            
+            // Validate passwords match
+            if (password !== confirmPassword) {
+                errorMsg.textContent = 'Passwords do not match';
+                errorMsg.style.display = 'block';
+                return;
+            }
+            
+            try {
+                const requestBody = {
+                    username,
+                    email,
+                    password,
+                    full_name: fullName,
+                    location,
+                    interests
+                };
+                
+                // Include face embeddings if captured
+                if (faceEmbeddings.length > 0) {
+                    requestBody.face_embeddings = faceEmbeddings;
+                }
+                
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify(requestBody)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store session token
+                    localStorage.setItem('sessionToken', data.token);
+                    localStorage.setItem('username', data.username);
+                    // Set cookie
+                    document.cookie = `session_token=${data.token}; path=/; max-age=86400`;
+                    // Redirect to mirror
+                    window.location.href = '/';
+                } else {
+                    errorMsg.textContent = data.detail || 'Registration failed';
+                    errorMsg.style.display = 'block';
+                }
+            } catch (error) {
+                errorMsg.textContent = 'Connection error. Please try again.';
+                errorMsg.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>
