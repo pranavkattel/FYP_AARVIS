@@ -7,7 +7,7 @@ from agent.state import AgentState
 from agent.tools import tools
 from datetime import datetime, timedelta
 
-# Bind all tools to Ollama — same pattern as agent3_with_task.py
+# Bind all tools to Ollama
 model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
 
 SYSTEM_PROMPT_TEMPLATE = """/no_think
@@ -48,11 +48,29 @@ def model_call(state: AgentState) -> AgentState:
         user_context += f"\nUser's interests: {state['user_interests']}"
 
     system = SystemMessage(content=prompt + user_context)
-    response = model.invoke([system] + list(state["messages"]))
+    try:
+        response = model.invoke([system] + list(state["messages"]))
+    except Exception as exc:
+        print(f"[AARVIS] Model invocation failed: {exc}")
 
-    # Strip <think>...</think> blocks from qwen3 output
+        # Simple local fallback so UI remains usable if Ollama is unavailable/OOM
+        last_text = ""
+        if state.get("messages"):
+            last = state["messages"][-1]
+            last_text = (getattr(last, "content", "") or "").strip().lower()
+
+        if any(greet in last_text for greet in ["hi", "hello", "hey", "good morning", "good evening"]):
+            fallback = "Hi! I'm here. My local AI model is restarting, but I can try again in a moment."
+        else:
+            fallback = "I’m having trouble with the local AI model right now. Please try again in a few seconds."
+
+        return {"messages": [AIMessage(content=fallback)]}
+
+    # Strip <think>...</think> blocks from qwen3 output (handles unclosed tags too)
     cleaned_content = response.content or ""
-    cleaned_content = re.sub(r"<think>[\s\S]*?</think>", "", cleaned_content).strip()
+    cleaned_content = re.sub(r"<think>[\s\S]*?</think>", "", cleaned_content)  # closed tags
+    cleaned_content = re.sub(r"<think>[\s\S]*$", "", cleaned_content)            # unclosed tag (truncated output)
+    cleaned_content = cleaned_content.strip()
 
     # Deduplicate tool calls by name — qwen3 sometimes emits the same tool twice
     # with slightly different args. Keep only the most complete call per tool name.

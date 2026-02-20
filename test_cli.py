@@ -348,8 +348,13 @@ def run_cli():
                 "error": None,
             })
 
+            import re as _re
             final_messages = result["messages"]
             response_text = final_messages[-1].content if final_messages else "No response."
+            # Strip any leaked <think> blocks (closed or unclosed)
+            response_text = _re.sub(r"<think>[\s\S]*?</think>", "", response_text)
+            response_text = _re.sub(r"<think>[\s\S]*$", "", response_text)
+            response_text = response_text.strip() or "No response."
 
             # Update in-memory history — keep only human/AI text, strip tool messages
             messages = clean_messages_for_history(result["messages"])

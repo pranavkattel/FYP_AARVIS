@@ -118,6 +118,7 @@ body {
     border: 1px solid rgba(255,255,255,0.35);
     border-radius: 50%;
     animation: pulsate 3s ease-out infinite;
+    pointer-events: none;
 }
 .pulse:nth-child(2) { animation-delay: 1s; }
 .pulse:nth-child(3) { animation-delay: 2s; }
@@ -135,8 +136,54 @@ body {
     border: none;
     cursor: pointer;
     padding: 0;
-    transition: transform 0.2s ease, background 0.2s ease;
+    transition: transform 0.2s ease, background 0.2s ease, opacity 0.3s ease;
 }
+
+/* ── Auto-listening states ── */
+.sm-voice-ring.auto-listening .sm-voice-dot { opacity: 0; }
+.sm-voice-ring.auto-listening .pulse {
+    border-color: rgba(255,255,255,0.25);
+    animation-duration: 3.5s;
+}
+.sm-voice-ring.speech-detected .pulse {
+    border-color: rgba(255,255,255,0.55);
+    animation-duration: 1.6s;
+}
+.sm-voice-ring.thinking-state .sm-voice-dot {
+    opacity: 1;
+    animation: think-pulse 1.2s ease-in-out infinite;
+}
+@keyframes think-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50%      { transform: scale(1.5); opacity: 1; }
+}
+
+/* Audio bars (equalizer visualisation) */
+.audio-bars {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    position: absolute;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+.sm-voice-ring.auto-listening .audio-bars { opacity: 1; }
+.audio-bars span {
+    display: block;
+    width: 3px;
+    min-height: 3px;
+    height: 4px;
+    background: rgba(255,255,255,0.55);
+    border-radius: 2px;
+    transition: height 0.06s ease-out;
+}
+.sm-voice-ring.speech-detected .audio-bars span {
+    background: rgba(255,255,255,0.85);
+}
+
 .sm-voice-ring.listening .sm-voice-dot { background: #fff; transform: scale(1.4); }
 
 .voice-status {

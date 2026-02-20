@@ -49,6 +49,51 @@ async def speak_async(text: str, voice: str = 'af_heart', speed: float = 1.0) ->
     await loop.run_in_executor(None, speak, text, voice, speed)
 
 
+def speak_sentence(text: str, voice: str = 'af_heart', speed: float = 1.0) -> None:
+    """
+    Speak a single sentence/chunk immediately. Blocks until audio finishes.
+    Designed to be called from a background thread while the LLM is still streaming.
+    """
+    try:
+        import sounddevice as sd
+        pipeline = _get_pipeline()
+        for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r'\n+'):
+            sd.play(audio, samplerate=24000)
+            sd.wait()
+    except Exception as e:
+        print(f"[TTS] speak_sentence error: {e}")
+
+
+def get_sentence_audio_bytes(text: str, voice: str = 'af_heart', speed: float = 1.0) -> bytes:
+    """
+    Generate TTS audio for a single sentence and return as WAV bytes.
+    Designed for streaming sentence-by-sentence to the browser.
+    """
+    import io
+    import wave
+
+    try:
+        pipeline = _get_pipeline()
+        all_audio = []
+        for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r'\n+'):
+            all_audio.append(audio)
+
+        if not all_audio:
+            return b""
+
+        combined = np.concatenate(all_audio)
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)      # 16-bit
+            wf.setframerate(24000)
+            wf.writeframes((combined * 32767).astype(np.int16).tobytes())
+        return buf.getvalue()
+    except Exception as e:
+        print(f"[TTS] get_sentence_audio_bytes error: {e}")
+        return b""
+
+
 def get_audio_bytes(text: str, voice: str = 'af_heart', speed: float = 1.0) -> bytes:
     """
     Generate TTS audio and return as raw bytes (WAV format).

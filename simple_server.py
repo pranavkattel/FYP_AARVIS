@@ -43,13 +43,14 @@ def transcribe_audio_bytes(audio_bytes: bytes) -> str | None:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
-        segments, _ = model.transcribe(tmp_path, beam_size=5, language="en")
-        text = " ".join(seg.text.strip() for seg in segments).strip()
+        segments, info = model.transcribe(tmp_path, beam_size=5, language="en")
+        seg_list = list(segments)
+        text = " ".join(seg.text.strip() for seg in seg_list).strip()
 
         os.unlink(tmp_path)
         return text if text else None
     except Exception as e:
-        print(f"[STT] Transcription error: {e}")
+        print(f"[STT] Error: {e}")
         return None
 
 # Import calendar functions
@@ -399,6 +400,7 @@ async def face_login(request: Request, response: Response):
     
     except Exception as e:
         print(f"[DEBUG] Face login error: {e}")
+        
         return {"success": False, "message": str(e)}
 
 @app.get("/api/face/check-cache")
@@ -424,16 +426,21 @@ async def check_face_cache(session_token: Optional[str] = Cookie(None)):
     return {"cached": False, "message": "Face verification needed"}
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] = Cookie(None)):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    session_token: Optional[str] = Cookie(None),
+    token: Optional[str] = None,
+):
     await websocket.accept()
 
     # Resolve authenticated user from existing sessions dict
-    if not session_token or session_token not in sessions:
+    auth_token = session_token or token
+    if not auth_token or auth_token not in sessions:
         await websocket.send_json({"type": "error", "text": "Not authenticated"})
         await websocket.close()
         return
 
-    username = sessions[session_token]
+    username = sessions[auth_token]
     user = get_user_by_username(username)  # from database.py
     if not user:
         await websocket.send_json({"type": "error", "text": "User not found"})
@@ -461,10 +468,24 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
         "text": f"Welcome back, {first_name}!"
     })
 
+    # ── Speak a welcome greeting via TTS ──
+    try:
+        from services.tts_service import get_sentence_audio_bytes
+        welcome_text = f"Welcome, {first_name}!"
+        welcome_wav = await asyncio.to_thread(get_sentence_audio_bytes, welcome_text)
+        if welcome_wav:
+            import base64 as _b64
+            await websocket.send_json({"type": "tts_audio", "data": _b64.b64encode(welcome_wav).decode('ascii')})
+    except Exception as e:
+        print(f"[WS] Welcome TTS error (non-fatal): {e}")
+
     try:
         while True:
             # Accept both text (JSON) and binary (audio) messages
             ws_message = await websocket.receive()
+
+            if ws_message.get("type") == "websocket.disconnect":
+                break
 
             user_text = None
 
@@ -478,10 +499,9 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
                     if audio_b64:
                         await websocket.send_json({"type": "voice_state", "state": "thinking"})
                         audio_bytes = base64.b64decode(audio_b64)
-                        print(f"[WS] Received audio: {len(audio_bytes)} bytes")
                         transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes)
                         if transcript:
-                            print(f"[WS] Transcribed: {transcript}")
+                            print(f"[VOICE] \"{transcript}\"")
                             await websocket.send_json({"type": "transcript", "text": transcript})
                             user_text = transcript
                         else:
@@ -493,10 +513,9 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
                 # Raw binary audio
                 audio_bytes = ws_message["bytes"]
                 await websocket.send_json({"type": "voice_state", "state": "thinking"})
-                print(f"[WS] Received binary audio: {len(audio_bytes)} bytes")
                 transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes)
                 if transcript:
-                    print(f"[WS] Transcribed: {transcript}")
+                    print(f"[VOICE] \"{transcript}\"")
                     await websocket.send_json({"type": "transcript", "text": transcript})
                     user_text = transcript
                 else:
@@ -506,6 +525,23 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
 
             if not user_text:
                 continue
+
+            # ── "bye bye" → logout ──
+            _bye_normalised = user_text.lower().strip().rstrip('.!?,')
+            if _bye_normalised in ('bye bye', 'bye-bye', 'byebye', 'bye', 'goodbye', 'good bye', 'log out', 'logout', 'sign out'):
+                try:
+                    from services.tts_service import get_sentence_audio_bytes as _bye_tts
+                    bye_text = f"Goodbye, {first_name}. See you later!"
+                    bye_wav = await asyncio.to_thread(_bye_tts, bye_text)
+                    if bye_wav:
+                        await websocket.send_json({"type": "tts_audio", "data": base64.b64encode(bye_wav).decode('ascii')})
+                except Exception:
+                    pass
+                await websocket.send_json({"type": "logout"})
+                # Clean up server session
+                if auth_token and auth_token in sessions:
+                    del sessions[auth_token]
+                break
 
             # Push thinking state to UI
             await websocket.send_json({"type": "voice_state", "state": "thinking"})
@@ -518,25 +554,100 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
             messages.append(HumanMessage(content=user_text))
 
             try:
-                # Run agent3-style graph — tool loop handles all tool calls internally
-                result = await agent.ainvoke({
-                    "messages": messages,
-                    "current_user": username,
-                    "user_id": user['id'],
-                    "session_id": session_id,
-                    "user_location": user.get('location', 'Kathmandu'),
-                    "user_interests": user.get('interests', 'technology'),
-                    "voice_state": "thinking",
-                    "pending_confirmation": None,
-                    "pending_action": None,
-                    "draft_email": None,
-                    "final_response": None,
-                    "error": None,
-                })
+                # ── Streaming agent invocation ──────────────────────────
+                # Stream tokens from the LLM and pipe completed sentences
+                # to TTS immediately, so the user hears the first sentence
+                # while the model is still generating the rest.
+                import re as _re
+                from services.tts_service import get_sentence_audio_bytes
 
-                # Extract final text response from last AI message
-                final_messages = result["messages"]
-                response_text = final_messages[-1].content if final_messages else "I didn't get a response."
+                full_response = ""
+                sentence_buffer = ""
+                tts_tasks = []  # background TTS tasks (now produce audio bytes)
+                sent_first_chunk = False
+                final_result = None  # to capture tool messages for history
+                _inside_think = False  # track <think> block state for streaming
+
+                async for event in agent.astream_events(
+                    {
+                        "messages": messages,
+                        "current_user": username,
+                        "user_id": user['id'],
+                        "session_id": session_id,
+                        "user_location": user.get('location', 'Kathmandu'),
+                        "user_interests": user.get('interests', 'technology'),
+                        "voice_state": "thinking",
+                        "pending_confirmation": None,
+                        "pending_action": None,
+                        "draft_email": None,
+                        "final_response": None,
+                        "error": None,
+                    },
+                    version="v2",
+                ):
+                    kind = event.get("event")
+
+                    # Capture token-by-token output from the LLM node
+                    if kind == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            token = chunk.content
+
+                            # Track whether we're inside a <think> block
+                            if "<think>" in token:
+                                _inside_think = True
+                            if _inside_think:
+                                if "</think>" in token:
+                                    # Extract any text after </think>
+                                    token = token.split("</think>", 1)[1]
+                                    _inside_think = False
+                                else:
+                                    continue  # skip tokens inside think block
+                            if not token:
+                                continue
+
+                            full_response += token
+                            sentence_buffer += token
+
+                            # Send every token to frontend for instant display
+                            await websocket.send_json({
+                                "type": "response_chunk",
+                                "token": token,
+                                "first": not sent_first_chunk,
+                            })
+                            sent_first_chunk = True
+
+                            # When a sentence boundary is hit, dispatch to TTS
+                            # immediately so speech starts while LLM continues
+                            sentence_match = _re.search(r'[.!?]\s', sentence_buffer)
+                            if sentence_match:
+                                sentence_end = sentence_match.end()
+                                sentence = sentence_buffer[:sentence_end].strip()
+                                sentence_buffer = sentence_buffer[sentence_end:]
+                                if sentence:
+                                    await websocket.send_json({"type": "voice_state", "state": "speaking"})
+                                    audio_wav = await asyncio.to_thread(get_sentence_audio_bytes, sentence)
+                                    if audio_wav:
+                                        audio_b64 = base64.b64encode(audio_wav).decode('ascii')
+                                        await websocket.send_json({"type": "tts_audio", "data": audio_b64})
+
+                    # Capture the final state after the graph finishes
+                    if kind == "on_chain_end" and event.get("name") == "LangGraph":
+                        final_result = event.get("data", {}).get("output")
+
+                # Flush any remaining text in the sentence buffer
+                remaining = sentence_buffer.strip()
+                # Also strip any lingering <think> blocks from full response
+                full_response = _re.sub(r"<think>[\s\S]*?</think>", "", full_response).strip()
+                if remaining:
+                    remaining = _re.sub(r"<think>[\s\S]*?</think>", "", remaining).strip()
+                    if remaining:
+                        audio_wav = await asyncio.to_thread(get_sentence_audio_bytes, remaining)
+                        if audio_wav:
+                            audio_b64 = base64.b64encode(audio_wav).decode('ascii')
+                            await websocket.send_json({"type": "tts_audio", "data": audio_b64})
+
+                response_text = full_response if full_response else "I didn't get a response."
 
                 # Persist assistant response
                 save_conversation(
@@ -544,12 +655,12 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
                     agent_type="AARVIS"
                 )
 
-                # Update in-memory history for next turn — collapse tool interactions
-                # into the final AI message so model retains tool results (event_ids etc.)
+                # Update in-memory history for next turn
                 from langchain_core.messages import ToolMessage
+                result_messages = final_result.get("messages", messages) if final_result and isinstance(final_result, dict) else messages + [AIMessage(content=response_text)]
                 cleaned_messages = []
                 pending_tool_results = []
-                for m in result["messages"]:
+                for m in result_messages:
                     if isinstance(m, ToolMessage):
                         tool_name = getattr(m, 'name', 'tool')
                         pending_tool_results.append(f"[{tool_name} result: {m.content}]")
@@ -571,18 +682,9 @@ async def websocket_endpoint(websocket: WebSocket, session_token: Optional[str] 
                 print(f"[WS] Agent error: {agent_err}")
                 response_text = "I'm sorry, I encountered an error processing your request. Please try again."
 
-            # Send to frontend
+            # Send final complete response + state reset
             await websocket.send_json({"type": "animation_stop"})
             await websocket.send_json({"type": "response", "text": response_text})
-            await websocket.send_json({"type": "voice_state", "state": "speaking"})
-
-            # Speak response locally via Kokoro TTS
-            try:
-                from services.tts_service import speak_async
-                await speak_async(response_text)
-            except Exception as tts_err:
-                print(f"[WS] TTS error (non-fatal): {tts_err}")
-
             await websocket.send_json({"type": "voice_state", "state": "idle"})
             await websocket.send_json({"type": "status", "text": "Ready", "state": "ready"})
 
@@ -611,27 +713,17 @@ async def get_weather(session_token: Optional[str] = Cookie(None)):
             response = await client.get(url)
             data = response.json()
             
-            print(f"[DEBUG] Weather API status: {response.status_code}", flush=True)
-            
             if response.status_code == 200:
-                print(f"[DEBUG] Weather API response keys: {data.keys()}", flush=True)
-                print(f"[DEBUG] Has forecast: {'forecast' in data}", flush=True)
-                
                 if 'forecast' in data and 'forecastday' in data['forecast']:
                     forecast_day = data['forecast']['forecastday'][0]['day']
-                    print(f"[DEBUG] Forecast day data: {forecast_day}", flush=True)
-                    
-                    result = {
+                    return {
                         "temp": data['current']['temp_c'],
                         "condition": data['current']['condition']['text'],
                         "location": location,
                         "temp_min": forecast_day['mintemp_c'],
                         "temp_max": forecast_day['maxtemp_c']
                     }
-                    print(f"[DEBUG] Returning weather data: {result}", flush=True)
-                    return result
                 else:
-                    print(f"[DEBUG] No forecast data in response", flush=True)
                     return {
                         "temp": data['current']['temp_c'],
                         "condition": data['current']['condition']['text'],
@@ -640,7 +732,6 @@ async def get_weather(session_token: Optional[str] = Cookie(None)):
                         "temp_max": 12
                     }
             else:
-                print(f"[DEBUG] Weather API error status code", flush=True)
                 return {
                     "temp": 8,
                     "condition": "Unable to fetch weather",
@@ -649,8 +740,7 @@ async def get_weather(session_token: Optional[str] = Cookie(None)):
                     "temp_max": 12
                 }
     except Exception as e:
-        print(f"[DEBUG] Error fetching weather: {e}")
-        print("[DEBUG] Check your internet connection or firewall settings")
+        print(f"[Weather] Error: {e}")
         return {
             "temp": 8,
             "condition": "Connection timeout - check internet",
@@ -688,27 +778,18 @@ async def get_news(session_token: Optional[str] = Cookie(None)):
     else:
         url = f"https://newsapi.org/v2/top-headlines?country=us&apiKey={API_KEY}"
     
-    print(f"[DEBUG] Fetching news from: {url}", flush=True)
-    
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
             data = response.json()
             
-            print(f"[DEBUG] NewsAPI response status: {response.status_code}", flush=True)
-            print(f"[DEBUG] NewsAPI response: {data.get('status', 'unknown')}", flush=True)
-            
             if data.get("status") == "ok" and data.get("articles"):
                 articles = [{"title": article["title"]} for article in data["articles"][:5]]
-                print(f"[DEBUG] Returning {len(articles)} news articles", flush=True)
                 return articles
             else:
-                error_msg = data.get('message', 'Unknown error')
-                print(f"[DEBUG] NewsAPI error: {error_msg}", flush=True)
                 return [{"title": "Unable to fetch news at this time"}]
     except Exception as e:
-        print(f"[DEBUG] Error fetching news: {e}", flush=True)
-        print("[DEBUG] Network timeout - check your internet connection")
+        print(f"[News] Error: {e}")
         return [
             {"title": "⚠️ Unable to connect to news service"},
             {"title": "Check your internet connection or firewall settings"},
@@ -718,18 +799,7 @@ async def get_news(session_token: Optional[str] = Cookie(None)):
 @app.get("/api/calendar")
 async def get_calendar():
     """Get today's events from Google Calendar"""
-    import sys
-    
-    # Write to debug file
-    with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'w') as f:
-        f.write("========= Calendar API endpoint called =========\n")
-        f.flush()
-    
-    print("\n[DEBUG] ========= Calendar API endpoint called =========", flush=True)
-    sys.stdout.flush()
-    
     if not CALENDAR_AVAILABLE:
-        print("[DEBUG] Calendar not available, using sample data", flush=True)
         return {
             "events": [
                 {"time": "09:00 AM", "endTime": "10:00 AM", "title": "Team Standup", "status": "upcoming", "startHour": 9.0, "endHour": 10.0},
@@ -737,105 +807,39 @@ async def get_calendar():
                 {"time": "05:30 PM", "endTime": "06:30 PM", "title": "Gym Session", "status": "upcoming", "startHour": 17.5, "endHour": 18.5}
             ]
         }
-    
+
     try:
-        with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-            f.write("Fetching events from Google Calendar...\n")
-            f.flush()
-        
-        print("[DEBUG] Fetching events from Google Calendar...", flush=True)
-        sys.stdout.flush()
-        
-        # Fetch events with timeout handling
         events = get_todays_events()
-        
-        with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-            f.write(f"Retrieved {len(events) if events else 0} events\n")
-            if events:
-                f.write(f"Events: {events}\n")
-            f.flush()
-        
-        print(f"[DEBUG] Retrieved {len(events) if events else 0} events", flush=True)
-        sys.stdout.flush()
-        
+
         if not events:
-            print("[DEBUG] No events found or unable to connect")
             return {"events": []}
-        
-        # Sort events by start time
+
         sorted_events = sorted(events, key=lambda e: e['start'].get('dateTime', e['start'].get('date')))
-        
-        # Format events for API response
+
         formatted_events = []
         local_tz = datetime.now().astimezone().tzinfo
         now_local = datetime.now().astimezone()
-        
+
         for event in sorted_events:
             start = event['start'].get('dateTime', event['start'].get('date'))
             end = event['end'].get('dateTime', event['end'].get('date'))
             summary = event.get('summary', 'Untitled Event')
-            
-            print(f"[DEBUG] ==================", flush=True)
-            print(f"[DEBUG] Processing event: {summary}", flush=True)
-            print(f"[DEBUG]   Raw start: {start}", flush=True)
-            print(f"[DEBUG]   Raw end: {end}", flush=True)
-            print(f"[DEBUG]   Start type: {type(start)}", flush=True)
-            
+
             try:
-                with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                    f.write(f"Processing event: {summary}\n")
-                    f.write(f"Start: {start}, End: {end}\n")
-                    f.flush()
-                
                 if 'T' in start:  # dateTime format
-                    with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                        f.write(f"Detected datetime format\n")
-                        f.flush()
-                    
-                    print(f"[DEBUG]   Detected datetime format", flush=True)
-                    # Handle timezone in datetime string
                     start_clean = start.replace('Z', '+00:00')
                     end_clean = end.replace('Z', '+00:00')
-                    
-                    with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                        f.write(f"Cleaned start: {start_clean}\n")
-                        f.write(f"Cleaned end: {end_clean}\n")
-                        f.flush()
-                    
-                    print(f"[DEBUG]   Cleaned start: {start_clean}", flush=True)
-                    print(f"[DEBUG]   Cleaned end: {end_clean}", flush=True)
-                    
-                    # Parse datetime - handle both ISO format and timezone offsets
+
                     try:
-                        from datetime import timezone
                         import re
-                        # Convert to datetime
                         event_time = datetime.fromisoformat(start_clean)
                         event_end_time = datetime.fromisoformat(end_clean)
-                        
-                        with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                            f.write(f"Successfully parsed with fromisoformat\n")
-                            f.write(f"event_time: {event_time}\n")
-                            f.write(f"event_end_time: {event_end_time}\n")
-                            f.flush()
-                        
-                        print(f"[DEBUG]   Successfully parsed with fromisoformat", flush=True)
-                    except Exception as parse_error:
-                        with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                            f.write(f"fromisoformat failed: {parse_error}\n")
-                            f.flush()
-                        
-                        print(f"[DEBUG]   fromisoformat failed: {parse_error}", flush=True)
-                        # Fallback: strip timezone and parse as naive datetime
-                        start_naive = re.sub(r'[+-]\d{2}:\d{2}$', '', start)
-                        end_naive = re.sub(r'[+-]\d{2}:\d{2}$', '', end)
-                        print(f"[DEBUG]   Trying naive parse: {start_naive}", flush=True)
+                    except Exception:
+                        start_naive = re.sub(r'[+-]\\d{2}:\\d{2}$', '', start)
+                        end_naive = re.sub(r'[+-]\\d{2}:\\d{2}$', '', end)
                         event_time = datetime.fromisoformat(start_naive.replace('Z', ''))
                         event_end_time = datetime.fromisoformat(end_naive.replace('Z', ''))
-                        print(f"[DEBUG]   Successfully parsed as naive", flush=True)
-                    
-                    # Normalize to local timezone so UI labels and timeline placement match
-                    # the user's local clock (and hour marks).
+
                     if event_time.tzinfo is not None:
                         event_time_local = event_time.astimezone(local_tz)
                     else:
@@ -849,19 +853,7 @@ async def get_calendar():
                     time_str = event_time_local.strftime("%I:%M %p")
                     end_time_str = event_end_time_local.strftime("%I:%M %p")
                     status = "upcoming" if event_time_local > now_local else "past"
-                    
-                    with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                        f.write(f"time_str: {time_str}\n")
-                        f.write(f"end_time_str: {end_time_str}\n")
-                        f.write(f"status: {status}\n")
-                        f.write(f"now_local: {now_local}\n")
-                        f.write(f"event_time_local: {event_time_local}\n")
-                        f.write(f"Comparison: event_time_local({event_time_local}) > now_local({now_local}) = {event_time_local > now_local}\n")
-                        f.flush()
-                    
-                    print(f"[DEBUG]   Final time_str: {time_str}", flush=True)
-                    print(f"[DEBUG]   Final end_time_str: {end_time_str}", flush=True)
-                    
+
                     formatted_events.append({
                         "time": time_str,
                         "endTime": end_time_str,
@@ -870,26 +862,17 @@ async def get_calendar():
                         "startHour": event_time_local.hour + event_time_local.minute / 60,
                         "endHour": event_end_time_local.hour + event_end_time_local.minute / 60
                     })
-                    
-                    with open('d:/fyp_mirror_jarvis/debug_calendar.txt', 'a') as f:
-                        f.write(f"Added to formatted_events successfully\n")
-                        f.flush()
-                    
-                    print(f"[DEBUG]   Formatted: {time_str} - {end_time_str}, status: {status}", flush=True)
                 else:  # all-day event
-                    time_str = "All Day"
-                    status = "all-day"
                     formatted_events.append({
-                        "time": time_str,
+                        "time": "All Day",
                         "endTime": "All Day",
                         "title": summary,
-                        "status": status,
+                        "status": "all-day",
                         "startHour": 0,
                         "endHour": 24
                     })
-                    print(f"[DEBUG]   All-day event")
             except Exception as e:
-                print(f"[DEBUG] Error parsing event: {e}")
+                print(f"[Calendar] Error parsing event '{summary}': {e}")
                 formatted_events.append({
                     "time": "Unknown",
                     "endTime": "Unknown",
@@ -898,19 +881,12 @@ async def get_calendar():
                     "startHour": 0,
                     "endHour": 1
                 })
-        
-        print(f"[DEBUG] Returning {len(formatted_events)} formatted events")
+
         return {"events": formatted_events}
-        
+
     except Exception as e:
-        print(f"[DEBUG] Error fetching calendar: {e}", flush=True)
-        import traceback
-        print(f"[DEBUG] Traceback: {traceback.format_exc()}", flush=True)
-        traceback.print_exc()
-        return {
-            "error": str(e),
-            "events": []
-        }
+        print(f"[Calendar] Error: {e}")
+        return {"error": str(e), "events": []}
 
 
 @app.post("/api/briefing/trigger")
@@ -1008,5 +984,13 @@ async def trigger_briefing(session_token: Optional[str] = Cookie(None)):
 if __name__ == "__main__":
     import uvicorn
     import logging
-    logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
+
+    # Show INFO for our app, silence noisy library debug logs
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    for _noisy in (
+        "httpcore", "httpx", "httpcore.connection", "httpcore.http11",
+        "asyncio", "faster_whisper", "websockets", "uvicorn.error",
+    ):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
