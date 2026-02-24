@@ -1,0 +1,83 @@
+"WBS #","Name / Title",Type,"Start Date","End Date","Estimated Hours","Actual Hours","Percent Complete",Resources,Predecessors,Notes,Comments,"Task Color"
+1,AMMS,project,2024-11-02,2025-03-22,0,0,0,,,,,
+1.1,"PHASE 1: PROJECT INITIATION AND REQUIREMENTS COLLECTION",group,2024-11-02,2024-11-18,0,0,0,,,,,
+1.1.1,"Identifying AI Assistant Requirements",task,2024-11-02,2024-11-03,0,0,0,,,,,blue2
+1.1.2,"Conduct User Needs Analysis",task,2024-11-04,2024-11-06,0,0,0,,1.1.1,,,blue2
+1.1.3,"Create Product Backlog",task,2024-11-07,2024-11-08,0,0,0,,1.1.2,,,blue2
+1.1.4,"Sprint Planning",task,2024-11-09,2024-11-10,0,0,0,,1.1.3,,,blue2
+1.1.5,"Define Sprint Goals and Timeline",task,2024-11-11,2024-11-12,0,0,0,,1.1.4,,,blue2
+1.1.6,"Assign Team Roles for Sprint",task,2024-11-13,2024-11-14,0,0,0,,1.1.5,,,blue2
+1.1.7,"M1: Requirements Complete",milestone,2024-11-18,2024-11-18,0,0,0,,1.1.6,,,blue2
+1.2,"PHASE 2: DESIGN AND DEVELOPMENT",group,2024-11-18,2024-12-06,0,0,0,,,,,
+1.2.1,"Define Core System Architecture",task,2024-11-18,2024-11-21,0,0,0,,1.1.7,,,blue2
+1.2.1.1,"Facial Recognition Module",task,2024-11-18,2024-11-19,0,0,0,,1.2.1,,,blue2
+1.2.1.2,"Emotion Detection Module",task,2024-11-20,2024-11-20,0,0,0,,1.2.1.1,,,blue2
+1.2.1.3,"Motivational Feedback Module",task,2024-11-21,2024-11-21,0,0,0,,1.2.1.2,,,blue2
+1.2.1.4,"Email Messaging Module",task,2024-11-21,2024-11-21,0,0,0,,1.2.1.3,,,blue2
+1.2.1.5,"Data Integration Display",task,2024-11-21,2024-11-21,0,0,0,,1.2.1.4,,,blue2
+1.2.2,"Prototype Subsystems",task,2024-11-22,2024-11-28,0,0,0,,1.2.1.5,,,blue2
+1.2.3,"Create Technical Diagrams",task,2024-11-29,2024-12-01,0,0,0,,1.2.2,,,blue2
+1.2.4,"Collect User Feedback on Prototypes",task,2024-12-02,2024-12-03,0,0,0,,1.2.3,,,blue2
+1.2.5,"Refine Design Based on Feedback",task,2024-12-04,2024-12-05,0,0,0,,1.2.4,,,blue2
+1.2.6,"M2: Design Complete",milestone,2024-12-06,2024-12-06,0,0,0,,1.2.5,,,blue2
+1.3,"PHASE 3: SPRINT-BASED DEVELOPMENT",group,2024-12-07,2025-02-20,0,0,0,,,,,
+1.3.1,"Sprint 1: Facial Recognition Authentication",subgroup,2024-12-07,2024-12-18,0,0,0,,,,,
+1.3.1.1,"Develop Multi-User Face Recognition",task,2024-12-07,2024-12-11,0,0,0,,1.2.6,,,blue2
+1.3.1.2,"Integrate Face Auth with Camera",task,2024-12-12,2024-12-14,0,0,0,,1.3.1.1,,,blue2
+1.3.1.3,"Test User Differentiation",task,2024-12-15,2024-12-16,0,0,0,,1.3.1.2,,,blue2
+1.3.1.4,"Implement Privacy Controls",task,2024-12-17,2024-12-17,0,0,0,,1.3.1.3,,,blue2
+1.3.1.5,"M3: Facial Recognition Complete",milestone,2024-12-18,2024-12-18,0,0,0,,1.3.1.4,,,blue2
+1.3.2,"Sprint 2: Morning Briefings & News",subgroup,2024-12-18,2024-12-31,0,0,0,,,,,
+1.3.2.1,"Integrate Calendar/Email/Weather APIs",task,2024-12-18,2024-12-22,0,0,0,,1.3.1.5,,,blue2
+1.3.2.2,"Develop Personalized Briefing Logic",task,2024-12-23,2024-12-26,0,0,0,,1.3.2.1,,,blue2
+1.3.2.3,"Integrate Business News Feeds",task,2024-12-27,2024-12-29,0,0,0,,1.3.2.2,,,blue2
+1.3.2.4,"Test Auto-Delivery on Face Recognition",task,2024-12-30,2024-12-30,0,0,0,,1.3.2.3,,,blue2
+1.3.2.5,"M4: Briefings Complete",milestone,2024-12-31,2024-12-31,0,0,0,,1.3.2.4,,,blue2
+1.3.3,"Sprint 3: Natural AI Communication",subgroup,2025-01-01,2025-01-14,0,0,0,,,,,
+1.3.3.1,"Develop Multi-Turn Voice Interaction",task,2025-01-01,2025-01-05,0,0,0,,1.3.2.5,,,blue2
+1.3.3.2,"Integrate Local LLM for Privacy",task,2025-01-06,2025-01-09,0,0,0,,1.3.3.1,,,blue2
+1.3.3.3,"Test Natural Language Processing",task,2025-01-10,2025-01-12,0,0,0,,1.3.3.2,,,blue2
+1.3.3.4,"Refine Conversational Context",task,2025-01-13,2025-01-13,0,0,0,,1.3.3.3,,,blue2
+1.3.3.5,"M5: AI Communication Ready",milestone,2025-01-14,2025-01-14,0,0,0,,1.3.3.4,,,blue2
+1.3.4,"Sprint 4: Hardware Setup",subgroup,2025-01-14,2025-01-27,0,0,0,,,,,
+1.3.4.1,"Set up Raspberry Pi",task,2025-01-14,2025-01-16,0,0,0,,1.3.3.5,,,blue2
+1.3.4.2,"Mount monitor and camera",task,2025-01-17,2025-01-19,0,0,0,,1.3.4.1,,,blue2
+1.3.4.3,"Test basic connections",task,2025-01-20,2025-01-22,0,0,0,,1.3.4.2,,,blue2
+1.3.4.4,"Ensure network connectivity",task,2025-01-23,2025-01-26,0,0,0,,1.3.4.3,,,blue2
+1.3.4.5,"M6: Hardware Ready",milestone,2025-01-27,2025-01-27,0,0,0,,1.3.4.4,,,blue2
+1.3.5,"Sprint 5: Voice-Controlled Scheduling",subgroup,2025-01-27,2025-02-08,0,0,0,,,,,
+1.3.5.1,"Integrate Calendar API",task,2025-01-27,2025-01-30,0,0,0,,1.3.4.5,,,blue2
+1.3.5.2,"Develop NLP for Scheduling",task,2025-01-31,2025-02-04,0,0,0,,1.3.5.1,,,blue2
+1.3.5.3,"Test Voice-Based Event Management",task,2025-02-05,2025-02-06,0,0,0,,1.3.5.2,,,blue2
+1.3.5.4,"Collect Feedback on Scheduling Accuracy",task,2025-02-07,2025-02-07,0,0,0,,1.3.5.3,,,blue2
+1.3.5.5,"M7: Scheduling Ready",milestone,2025-02-08,2025-02-08,0,0,0,,1.3.5.4,,,blue2
+1.3.6,"Sprint 6: Intelligent Email Assistant",subgroup,2025-02-08,2025-02-20,0,0,0,,,,,
+1.3.6.1,"Integrate Email API with LLM",task,2025-02-08,2025-02-12,0,0,0,,1.3.5.5,,,blue2
+1.3.6.2,"Develop Voice Dictation System",task,2025-02-13,2025-02-16,0,0,0,,1.3.6.1,,,blue2
+1.3.6.3,"Test Email Drafting and Summarization",task,2025-02-17,2025-02-18,0,0,0,,1.3.6.2,,,blue2
+1.3.6.4,"Ensure Local Processing for Privacy",task,2025-02-19,2025-02-19,0,0,0,,1.3.6.3,,,blue2
+1.3.6.5,"M8: Email Assistant Complete",milestone,2025-02-20,2025-02-20,0,0,0,,1.3.6.4,,,blue2
+1.4,"PHASE 4: CONTINUOUS TESTING",group,2025-02-20,2025-03-07,0,0,0,,,,,
+1.4.1,"Unit Testing",subgroup,2025-02-20,2025-02-25,0,0,0,,,,,
+1.4.1.1,"Test facial recognition accuracy",task,2025-02-20,2025-02-21,0,0,0,,1.3.6.5,,,blue2
+1.4.1.2,"Test voice interaction responsiveness",task,2025-02-22,2025-02-23,0,0,0,,1.4.1.1,,,blue2
+1.4.1.3,"Test email assistant functionality",task,2025-02-24,2025-02-24,0,0,0,,1.4.1.2,,,blue2
+1.4.1.4,"Test scheduling commands",task,2025-02-25,2025-02-25,0,0,0,,1.4.1.3,,,blue2
+1.4.1.5,"Test news/briefing data interface",task,2025-02-25,2025-02-25,0,0,0,,1.4.1.4,,,blue2
+1.4.2,"Integration Testing",subgroup,2025-02-26,2025-03-01,0,0,0,,,,,
+1.4.2.1,"Test camera with facial recognition",task,2025-02-26,2025-02-26,0,0,0,,1.4.1.5,,,blue2
+1.4.2.2,"Test briefing delivery on face detection",task,2025-02-27,2025-02-27,0,0,0,,1.4.2.1,,,blue2
+1.4.2.3,"Test voice commands with calendar/email",task,2025-02-28,2025-02-28,0,0,0,,1.4.2.2,,,blue2
+1.4.2.4,"Test LLM integration with email/chat",task,2025-03-01,2025-03-01,0,0,0,,1.4.2.3,,,blue2
+1.4.3,"User Feedback Testing",task,2025-03-02,2025-03-03,0,0,0,,1.4.2.4,,,blue2
+1.4.4,"Bug Fixes and Refinements",task,2025-03-04,2025-03-06,0,0,0,,1.4.3,,,blue2
+1.4.5,"M9: Testing Complete",milestone,2025-03-07,2025-03-07,0,0,0,,1.4.4,,,blue2
+1.5,"PHASE 5: DOCUMENTATION AND HANDOVER",group,2025-03-07,2025-03-22,0,0,0,,,,,
+1.5.1,"Project Report",task,2025-03-07,2025-03-12,0,0,0,,1.4.5,,,blue2
+1.5.2,"Report Writing",task,2025-03-07,2025-03-12,0,0,0,,1.5.1,,,blue2
+1.5.3,"Future Enhancements Documentation",task,2025-03-13,2025-03-15,0,0,0,,1.5.2,,,blue2
+1.5.4,"User Documentation",task,2025-03-16,2025-03-18,0,0,0,,1.5.3,,,blue2
+1.5.5,"User Manual Creation",task,2025-03-16,2025-03-18,0,0,0,,1.5.4,,,blue2
+1.5.6,"Feature Guide Development and FAQ Documentation",task,2025-03-19,2025-03-21,0,0,0,,1.5.5,,,blue2
+1.5.7,"M10: Documentation Complete",milestone,2025-03-22,2025-03-22,0,0,0,,1.5.6,,,blue2
+1.5.8,"M11: Project Complete",milestone,2025-03-22,2025-03-22,0,0,0,,1.5.7,,,blue2

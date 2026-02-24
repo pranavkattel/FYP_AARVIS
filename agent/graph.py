@@ -6,9 +6,16 @@ from langgraph.prebuilt import ToolNode
 from agent.state import AgentState
 from agent.tools import tools
 from datetime import datetime, timedelta
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Bind all tools to Ollama
-model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
+# model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
+
+model = ChatGoogleGenerativeAI(
+    model="gemini-3-flash-preview",
+    temperature=0.7,
+    google_api_key="AIzaSyAan1nl_ICk0HebB1sQEflRDEEi2BPobbg"
+).bind_tools(tools)
 
 SYSTEM_PROMPT_TEMPLATE = """/no_think
 You are AARVIS, a smart mirror voice assistant. You speak naturally and concisely.
@@ -66,8 +73,22 @@ def model_call(state: AgentState) -> AgentState:
 
         return {"messages": [AIMessage(content=fallback)]}
 
+    # Normalize content: Gemini returns a list of parts, Ollama returns a string
+    raw_content = response.content or ""
+    if isinstance(raw_content, list):
+        # Extract text from Gemini-style content parts
+        parts = []
+        for part in raw_content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(part.get("text", ""))
+            elif hasattr(part, "text"):
+                parts.append(part.text)
+        raw_content = "".join(parts)
+
     # Strip <think>...</think> blocks from qwen3 output (handles unclosed tags too)
-    cleaned_content = response.content or ""
+    cleaned_content = raw_content
     cleaned_content = re.sub(r"<think>[\s\S]*?</think>", "", cleaned_content)  # closed tags
     cleaned_content = re.sub(r"<think>[\s\S]*$", "", cleaned_content)            # unclosed tag (truncated output)
     cleaned_content = cleaned_content.strip()

@@ -232,7 +232,7 @@ def run_cli():
     global ENABLE_TTS, ENABLE_VOICE
 
     print("=" * 60)
-    print("  🤖 AARVIS CLI Test Mode")
+    print("   AARVIS CLI Test Mode")
     print("=" * 60)
     print()
 
@@ -248,7 +248,7 @@ def run_cli():
     first_name = user['full_name'].split()[0]
     session_id = str(uuid.uuid4())
 
-    print(f"\n✅ Logged in as: {user['full_name']} ({user['username']})")
+    print(f"\nLogged in as: {user['full_name']} ({user['username']})")
     print(f"   Location: {user.get('location', 'N/A')}")
     print(f"   Interests: {user.get('interests', 'N/A')}")
     print(f"   Session: {session_id[:8]}...")
@@ -264,7 +264,7 @@ def run_cli():
             else:
                 messages.append(AIMessage(content=m["content"]))
         if recent:
-            print(f"📜 Loaded {len(recent)} messages from conversation history\n")
+            print(f" Loaded {len(recent)} messages from conversation history\n")
 
     print(f"Hello {first_name}! Type your message below.")
     print("Commands: 'quit', 'clear', 'tts on/off', 'voice on/off', 'history'\n")
@@ -277,7 +277,7 @@ def run_cli():
                 if user_text is None:
                     continue  # retry listening
             else:
-                user_text = input(f"\n🧑 You: ").strip()
+                user_text = input(f"\n You: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n\nGoodbye!")
             break
@@ -373,7 +373,7 @@ def run_cli():
                     for tc in tm.tool_calls:
                         print(f"\r🔧 Tool called: {tc['name']}({tc.get('args', {})})")
 
-            print(f"\r🤖 AARVIS: {response_text}")
+            print(f"\r AARVIS: {response_text}")
 
             # Optional TTS
             speak(response_text)

@@ -1,0 +1,53 @@
+Id,Start time,Completion time,Email,Name,How easy was it to log into the Smart Mirror system?,How accurate was the face recognition feature in identifying you?,Did the emotion detection and motivational quote feel relevant to your mood?,"How useful did you find the real-time updates (time, weather, news, etc.)?","On a scale of 0–10, how visually appealing was the Smart Mirror dashboard?",Did the system send appropriate alerts when an unknown person was detected?,How confident do you feel about the security provided by the Smart Mirror?,Which feature did you find most useful or impressive? Why?,Is there any feature you found unnecessary or would like improved?,Would you recommend this Smart Mirror system to others?
+1,4/27/2025 12:23,4/27/2025 12:23,anonymous,,9,9,Most of the time,10,10,Yes,9,All,,Definitely
+2,4/27/2025 12:24,4/27/2025 12:24,anonymous,,10,10,Always,10,10,Yes,10,Unknown person alert,No,Definitely
+3,4/27/2025 12:23,4/27/2025 12:24,anonymous,,10,10,Always,10,10,Yes,10,The time ,No,Definitely
+4,4/27/2025 12:24,4/27/2025 12:25,anonymous,,8,8,Always,9,9,Yes,8,Alert,,Probably
+5,4/27/2025 12:25,4/27/2025 12:25,anonymous,,10,9,Always,10,9,Yes,9,News,,Definitely
+6,4/27/2025 12:24,4/27/2025 12:25,anonymous,,10,10,Always,10,10,Yes,10,Weather,No,Definitely
+7,4/27/2025 12:25,4/27/2025 12:26,anonymous,,9,9,Always,9,9,Yes,9,All,,Definitely
+8,4/27/2025 12:26,4/27/2025 12:26,anonymous,,8,9,Most of the time,10,8,Yes,9,Weather,,Probably
+9,4/27/2025 12:26,4/27/2025 12:26,anonymous,,8,7,Most of the time,8,8,Yes,8,News,,Definitely
+10,4/27/2025 12:27,4/27/2025 12:27,anonymous,,10,10,Always,10,10,Yes,10,Unknown person alerts,,Definitely
+11,4/27/2025 12:28,4/27/2025 12:28,anonymous,,9,10,Always,10,10,Yes,10,Face detector ,N,Definitely
+12,4/27/2025 12:28,4/27/2025 12:29,anonymous,,9,10,Most of the time,8,9,Yes,8,All,,Definitely
+13,4/27/2025 12:28,4/27/2025 12:29,anonymous,,9,10,Most of the time,10,10,Yes,10,Time,No,Definitely
+14,4/27/2025 12:29,4/27/2025 12:29,anonymous,,10,9,Most of the time,10,8,Yes,9,All,,Definitely
+15,4/27/2025 12:29,4/27/2025 12:30,anonymous,,9,9,Always,9,9,Yes,9,Motivation,,Definitely
+16,4/27/2025 12:30,4/27/2025 12:30,anonymous,,10,10,Always,10,9,Yes,9,Emotion,,Probably
+17,4/27/2025 12:30,4/27/2025 12:30,anonymous,,9,8,Most of the time,8,8,Yes,8,Emotion,,Definitely
+18,4/27/2025 12:29,4/27/2025 12:31,anonymous,,10,9,Always,10,10,Yes,8,Emotion. ,,Definitely
+19,4/27/2025 12:30,4/27/2025 12:31,anonymous,,9,8,Always,9,9,Yes,10,All,,Definitely
+20,4/27/2025 12:31,4/27/2025 12:31,anonymous,,8,8,Most of the time,7,8,Yes,9,Alerts,,Probably
+21,4/27/2025 12:31,4/27/2025 12:32,anonymous,,9,8,Most of the time,9,9,Yes,7,Motivational quote and emotion detection,,Definitely
+22,4/27/2025 12:31,4/27/2025 12:32,anonymous,,9,8,Most of the time,9,10,Yes,8,Alerta,,Probably
+23,4/27/2025 12:32,4/27/2025 12:32,anonymous,,4,5,Rarely,5,3,No,6,None,,Definitely not
+24,4/27/2025 12:32,4/27/2025 12:33,anonymous,,9,7,Most of the time,9,9,Yes,10,Alerts ,,Probably
+25,4/27/2025 12:32,4/27/2025 12:33,anonymous,,8,9,Most of the time,8,8,Yes,7,detecting emotion and unknown person alert,,Probably
+26,4/27/2025 12:33,4/27/2025 12:33,anonymous,,9,10,Always,10,9,Yes,8,All,,Probably
+27,4/27/2025 12:33,4/27/2025 12:34,anonymous,,7,9,Most of the time,10,8,Yes,9,Unkown person alerts and news,None,Definitely
+28,4/27/2025 12:33,4/27/2025 12:34,anonymous,,7,6,Most of the time,8,8,Yes,5,alert for unknown person and emotion detection ,,Probably
+29,4/27/2025 12:34,4/27/2025 12:34,anonymous,,10,10,Always,10,10,Yes,10,Face recognition ,,Definitely
+30,4/27/2025 12:34,4/27/2025 12:34,anonymous,,10,8,Always,10,10,Yes,8,All,,Definitely
+31,4/27/2025 12:35,4/27/2025 12:35,anonymous,,9,9,Always,9,8,Yes,9,All,,Definitely
+32,4/27/2025 12:34,4/27/2025 12:35,anonymous,,10,10,Always,10,10,Yes,10,emotion detection and unknown person alert ,,Definitely
+33,4/27/2025 12:35,4/27/2025 12:36,anonymous,,8,7,Most of the time,8,7,Yes,8,Alerts ,,Probably
+34,4/27/2025 12:36,4/27/2025 12:36,anonymous,,9,7,Most of the time,8,9,Yes,8,All,,Probably
+35,4/27/2025 12:35,4/27/2025 12:36,anonymous,,8,7,Sometimes,7,6,Yes,5,emotion detection,,Probably
+36,4/27/2025 12:36,4/27/2025 12:37,anonymous,,9,8,Always,9,9,Yes,10,Emotion detection and motivation quotes,None,Definitely
+37,4/27/2025 12:37,4/27/2025 12:38,anonymous,,7,8,Always,8,7,Yes,9,Unkown person alert,Face recognition ,Definitely
+38,4/27/2025 12:36,4/27/2025 12:38,anonymous,,9,8,Most of the time,8,9,Yes,8,detecting emotion from face,,Definitely
+39,4/27/2025 12:38,4/27/2025 12:39,anonymous,,9,6,Most of the time,7,6,Yes,9,emotion detection,,Probably
+40,4/27/2025 12:38,4/27/2025 12:39,anonymous,,8,9,Most of the time,9,8,Yes,8,Face recognition ,None,Definitely
+41,4/27/2025 12:39,4/27/2025 12:40,anonymous,,5,5,Sometimes,6,4,No,4,motivational quote and news,,Probably not
+42,4/27/2025 12:40,4/27/2025 12:41,anonymous,,9,10,Most of the time,10,8,Yes,10,Unkown person alert ,No,Definitely
+43,4/27/2025 12:40,4/27/2025 12:41,anonymous,,7,6,Sometimes,7,7,Yes,6,emotion detection and news,,Probably
+44,4/27/2025 12:41,4/27/2025 12:42,anonymous,,3,6,Rarely,6,6,Yes,5,Alert was the most useful ,None,Probably not
+45,4/27/2025 12:38,4/27/2025 12:42,anonymous,,10,8,Most of the time,10,10,Yes,10,Alerts ,No,Definitely
+46,4/27/2025 12:41,4/27/2025 12:42,anonymous,,9,8,Always,9,10,Yes,7,news and alerts,,Definitely
+47,4/27/2025 12:42,4/27/2025 12:42,anonymous,,10,9,Always,9,10,Yes,10,Face recognition ,None,Definitely
+48,4/27/2025 12:42,4/27/2025 12:42,anonymous,,10,10,Always,10,10,Yes,10,emotion detection and news ,,Definitely
+49,4/27/2025 12:42,4/27/2025 12:43,anonymous,,8,6,Most of the time,8,7,Yes,8,Emotion detection ,None,Probably
+50,4/27/2025 12:43,4/27/2025 12:43,anonymous,,10,8,Most of the time,8,9,Yes,10,All,,Probably
+51,4/27/2025 12:43,4/27/2025 12:43,anonymous,,7,6,Most of the time,6,6,Yes,7,"news, emotion detection, alerts ",,Probably
+52,4/27/2025 12:43,4/27/2025 12:44,anonymous,,10,10,Always,10,10,Yes,10,All,,Definitely
