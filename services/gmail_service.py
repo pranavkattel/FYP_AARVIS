@@ -10,9 +10,47 @@ GMAIL_SCOPES = [
 ]
 GMAIL_TOKEN_FILE = 'token_gmail.pickle'
 
+# ── Per-user context ────────────────────────────────────────────────────────
+_current_username: str | None = None
 
-def get_gmail_service():
-    """Authenticate and return Gmail service. Mirrors authenticate_google_calendar() in calender.py."""
+def set_current_user(username: str | None) -> None:
+    """Set the active user so Gmail calls use their personal credentials."""
+    global _current_username
+    _current_username = username
+
+
+def get_gmail_service(username: str | None = None):
+    """
+    Authenticate and return a Gmail service.
+
+    If *username* is provided (or the module-level _current_username is set)
+    the function loads that user's OAuth tokens that were stored during
+    Google-sign-in registration.  Otherwise it falls back to the legacy
+    single-user pickle-file approach.
+    """
+    resolved_user = username or _current_username
+
+    # ── Per-user path (Google Sign-In users) ────────────────────────────────
+    if resolved_user:
+        try:
+            from database import get_user_google_tokens, update_google_tokens
+            from services.google_oauth import credentials_from_db
+            token_row = get_user_google_tokens(resolved_user)
+            if token_row:
+                creds = credentials_from_db(token_row)
+                # Persist any refreshed tokens back to the DB
+                if creds.token != token_row.get("google_access_token"):
+                    from datetime import timezone
+                    update_google_tokens(resolved_user, {
+                        "access_token":  creds.token,
+                        "refresh_token": creds.refresh_token,
+                        "expiry":        creds.expiry.isoformat() if creds.expiry else None,
+                    })
+                return build('gmail', 'v1', credentials=creds, cache_discovery=False)
+        except Exception as e:
+            print(f"[Gmail] Per-user credential load failed for {resolved_user}: {e}. Falling back to pickle.")
+
+    # ── Legacy single-user path (pickle file) ───────────────────────────────
     creds = None
 
     if os.path.exists(GMAIL_TOKEN_FILE):
@@ -28,4 +66,4 @@ def get_gmail_service():
         with open(GMAIL_TOKEN_FILE, 'wb') as f:
             pickle.dump(creds, f)
 
-    return build('gmail', 'v1', credentials=creds)
+    return build('gmail', 'v1', credentials=creds, cache_discovery=False)

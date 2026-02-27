@@ -5,3 +5,4 @@ token.pickle
 token_gmail.pickle
 __pycache__/
 *.pyc
+credentials_web.json

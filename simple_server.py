@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import json
 import asyncio
 import uuid
+import socket
 from pydantic import BaseModel
 from typing import Optional
 import secrets
@@ -15,7 +16,12 @@ import numpy as np
 import base64
 import pickle
 import os
-from database import create_user, verify_user, get_user_by_username, save_conversation, get_recent_context
+from database import (
+    create_user, verify_user, get_user_by_username, save_conversation, get_recent_context,
+    create_google_user, get_user_by_google_id, get_user_google_tokens, update_google_tokens,
+    get_all_users, delete_user_by_id, admin_update_user,
+)
+from services.google_oauth import build_auth_url, exchange_code_for_tokens
 from langchain_core.messages import HumanMessage, AIMessage
 
 # ── Server-side STT via faster_whisper (shared with CLI) ──
@@ -104,6 +110,10 @@ templates = Jinja2Templates(directory="templates")
 # Session storage (in production, use Redis or database)
 sessions = {}
 
+# Cross-device pairing: phone scans QR → triggers PC to open Google OAuth
+# {pair_token: {"status": "pending"|"triggered"}}
+pair_sessions = {}
+
 # Pydantic models for request validation
 class RegisterRequest(BaseModel):
     username: str
@@ -128,11 +138,64 @@ async def home(request: Request, session_token: Optional[str] = Cookie(None)):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    pair_token = secrets.token_urlsafe(16)
+    pair_sessions[pair_token] = {"status": "pending"}
+    return templates.TemplateResponse("login.html", {"request": request, "pair_token": pair_token})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
-    return templates.TemplateResponse("register.html", {"request": request})
+    pair_token = secrets.token_urlsafe(16)
+    pair_sessions[pair_token] = {"status": "pending"}
+    return templates.TemplateResponse("register.html", {"request": request, "pair_token": pair_token})
+
+@app.get("/setup-face", response_class=HTMLResponse)
+async def setup_face_page(request: Request, session_token: Optional[str] = Cookie(None)):
+    return templates.TemplateResponse("setup_face.html", {"request": request})
+
+
+# ── Admin routes ──────────────────────────────────────────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    return templates.TemplateResponse("admin.html", {"request": request})
+
+@app.get("/api/admin/users")
+async def admin_list_users():
+    return get_all_users()
+
+@app.get("/api/admin/face-list")
+async def admin_face_list():
+    """Return list of usernames that have face embeddings enrolled."""
+    return list(face_users_db.keys())
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int):
+    # Look up username before deleting so we can clean face DB
+    all_u = get_all_users()
+    target = next((u for u in all_u if u["id"] == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    delete_user_by_id(user_id)
+    # Remove face embeddings from memory + disk
+    uname = target["username"]
+    if uname in face_users_db:
+        del face_users_db[uname]
+        save_face_database(face_users_db)
+    return {"ok": True}
+
+@app.put("/api/admin/users/{user_id}")
+async def admin_update_user_route(user_id: int, request: Request):
+    body = await request.json()
+    ok = admin_update_user(
+        user_id=user_id,
+        full_name=body.get("full_name"),
+        email=body.get("email"),
+        location=body.get("location"),
+        interests=body.get("interests"),
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
 
 @app.post("/api/register")
 async def register(user: RegisterRequest, response: Response):
@@ -209,6 +272,109 @@ async def logout(session_token: Optional[str] = Cookie(None)):
         del sessions[session_token]
     return {"message": "Logged out successfully"}
 
+
+# ── Google OAuth endpoints ─────────────────────────────────────────────────
+
+# Temporary store for OAuth state tokens  {state_token: "register"|"login"}
+_oauth_states: dict[str, str] = {}
+
+@app.get("/auth/google")
+async def google_auth_start(request: Request, intent: str = "register", pair: str = ""):
+    """Redirect the browser to Google's OAuth consent screen."""
+    # Always use localhost for the redirect_uri — OAuth always runs on the PC.
+    host = request.headers.get("host", "localhost:8000")
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    redirect_uri = f"{scheme}://{host}/auth/google/callback"
+
+    state = secrets.token_urlsafe(16)
+    _oauth_states[state] = {"intent": intent, "redirect_uri": redirect_uri, "pair": pair}
+    try:
+        auth_url = build_auth_url(state=state, redirect_uri=redirect_uri)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/google/callback")
+async def google_auth_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    response: Response = None,
+):
+    """Handle the redirect back from Google after the user grants permission."""
+    if error:
+        return RedirectResponse(url=f"/register?error={error}", status_code=302)
+    if not code:
+        return RedirectResponse(url="/register?error=no_code", status_code=302)
+
+    # Retrieve intent and redirect_uri stored when the flow started
+    state_data = _oauth_states.pop(state, None) if state else None
+    if isinstance(state_data, dict):
+        intent = state_data.get("intent", "register")
+        redirect_uri = state_data.get("redirect_uri")
+    else:
+        # legacy / fallback
+        intent = state_data
+        redirect_uri = None
+
+    try:
+        tokens, profile = exchange_code_for_tokens(code, redirect_uri=redirect_uri)
+    except Exception as exc:
+        print(f"[OAuth] Token exchange failed: {exc}")
+        return RedirectResponse(url="/register?error=token_exchange_failed", status_code=302)
+
+    google_id = profile["google_id"]
+
+    # Create or update the user record in the DB
+    is_new = False
+    try:
+        _, is_new = create_google_user(
+            google_id=google_id,
+            email=profile["email"],
+            full_name=profile["full_name"],
+            tokens=tokens,
+        )
+    except Exception as exc:
+        print(f"[OAuth] DB error: {exc}")
+        return RedirectResponse(url="/register?error=db_error", status_code=302)
+
+    # Look up the username that was assigned
+    user = get_user_by_google_id(google_id)
+    if not user:
+        return RedirectResponse(url="/register?error=user_not_found", status_code=302)
+
+    # Create a session
+    token = secrets.token_urlsafe(32)
+    sessions[token] = user["username"]
+
+    # New users OR users without face enrolled go to face setup
+    has_face = user["username"] in face_users_db and len(face_users_db[user["username"]]) > 0
+    dest = f"/?token={token}" if has_face else f"/setup-face?token={token}"
+
+    # If this OAuth was triggered from a phone (pair flow),
+    # store the session so the PC can pick it up, then send phone to pair-complete.
+    pair_token = state_data.get("pair", "") if isinstance(state_data, dict) else ""
+    if pair_token and pair_token in pair_sessions:
+        pair_sessions[pair_token].update({
+            "status": "complete",
+            "session_token": token,
+            "dest": dest,
+        })
+        redirect = RedirectResponse(url=f"/pair-complete", status_code=302)
+        redirect.set_cookie(key="session_token", value=token, httponly=True, max_age=86400, samesite="lax")
+        return redirect
+
+    redirect = RedirectResponse(url=dest, status_code=302)
+    redirect.set_cookie(
+        key="session_token",
+        value=token,
+        httponly=True,
+        max_age=86400,
+        samesite="lax",
+    )
+    return redirect
+
 @app.get("/api/user")
 async def get_current_user(session_token: Optional[str] = Cookie(None)):
     if not session_token or session_token not in sessions:
@@ -221,6 +387,49 @@ async def get_current_user(session_token: Optional[str] = Cookie(None)):
         raise HTTPException(status_code=404, detail="User not found")
     
     return user
+
+@app.get("/pair-complete", response_class=HTMLResponse)
+async def pair_complete_page(request: Request):
+    return templates.TemplateResponse("pair_complete.html", {"request": request})
+
+@app.get("/mobile-connect", response_class=HTMLResponse)
+async def mobile_connect(request: Request, pair: str = ""):
+    """Mobile landing page — phone scans QR, taps here to trigger PC OAuth."""
+    if not pair or pair not in pair_sessions:
+        return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>QR code expired. Please refresh the register page on your PC and scan again.</h3>")
+    return templates.TemplateResponse("mobile_pair.html", {"request": request, "pair_token": pair})
+
+@app.post("/api/pair-trigger/{pair_token}")
+async def pair_trigger(pair_token: str):
+    """Phone calls this to signal the PC to start Google OAuth."""
+    if pair_token not in pair_sessions:
+        raise HTTPException(status_code=404, detail="Invalid or expired pair token")
+    pair_sessions[pair_token]["status"] = "triggered"
+    return {"ok": True}
+
+@app.get("/api/pair-status/{pair_token}")
+async def pair_status(pair_token: str):
+    """PC polls this to detect when phone has completed Google OAuth."""
+    if pair_token not in pair_sessions:
+        return {"status": "unknown"}
+    entry = pair_sessions[pair_token]
+    resp = {"status": entry["status"]}
+    if entry["status"] == "complete":
+        resp["session_token"] = entry.get("session_token")
+        resp["dest"] = entry.get("dest", "/")
+    return resp
+
+@app.get("/api/local-url")
+async def get_local_url(path: str = "/register"):
+    """Return the LAN URL of this server so phone clients can connect."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = "127.0.0.1"
+    return {"url": f"http://{ip}:8000{path}"}
 
 @app.post("/api/face/verify")
 async def verify_face(request: Request):
@@ -400,8 +609,43 @@ async def face_login(request: Request, response: Response):
     
     except Exception as e:
         print(f"[DEBUG] Face login error: {e}")
-        
         return {"success": False, "message": str(e)}
+
+@app.post("/api/face/enroll")
+async def face_enroll(request: Request, session_token: Optional[str] = Cookie(None)):
+    """Enroll face for an already-logged-in user (e.g. after Google signup)."""
+    if not session_token or session_token not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not FACE_RECOGNITION_AVAILABLE:
+        return {"success": False, "message": "Face recognition not available"}
+
+    username = sessions[session_token]
+    data = await request.json()
+    images = data.get("images", [])  # list of base64 frames
+
+    if not images:
+        return {"success": False, "message": "No images provided"}
+
+    embeddings = []
+    for img_b64 in images:
+        try:
+            img_data = base64.b64decode(img_b64.split(',')[1] if ',' in img_b64 else img_b64)
+            nparr = np.frombuffer(img_data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            faces = face_app.get(frame)
+            if faces:
+                emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+                embeddings.append(emb)
+        except Exception:
+            continue
+
+    if not embeddings:
+        return {"success": False, "message": "No face detected in provided images"}
+
+    face_users_db[username] = embeddings
+    save_face_database(face_users_db)
+    print(f"[DEBUG] Enrolled {len(embeddings)} face embeddings for {username}")
+    return {"success": True, "embeddings_saved": len(embeddings)}
 
 @app.get("/api/face/check-cache")
 async def check_face_cache(session_token: Optional[str] = Cookie(None)):
@@ -446,6 +690,16 @@ async def websocket_endpoint(
         await websocket.send_json({"type": "error", "text": "User not found"})
         await websocket.close()
         return
+
+    # ── Set per-user Google credential context so calendar/gmail tools
+    #    automatically use this user's personal OAuth tokens.
+    try:
+        import calender as _cal_mod
+        from services.gmail_service import set_current_user as _gmail_set_user
+        _cal_mod.set_current_user(username)
+        _gmail_set_user(username)
+    except Exception:
+        pass  # non-fatal if modules aren't loaded yet
 
     session_id = str(uuid.uuid4())
 
@@ -993,4 +1247,38 @@ if __name__ == "__main__":
     ):
         logging.getLogger(_noisy).setLevel(logging.WARNING)
 
+    # Print LAN IP so user knows what to register in Google Console
+    try:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        _lan_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        _lan_ip = "<could not detect>"
+    print("\n" + "="*60)
+    print("  Smart Mirror running at:")
+    print(f"    PC   -> http://localhost:8000")
+    print(f"    LAN  -> http://{_lan_ip}:8000")
+    print(f"\n  For phone QR login, add this to Google Cloud Console")
+    print(f"  under Authorized Redirect URIs (one time only):")
+    print(f"    http://{_lan_ip}:8000/auth/google/callback")
+    print("="*60 + "\n")
+
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
+
+def _print_lan_info():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        lan_ip = "<could not detect>"
+    print("\n" + "="*60)
+    print(f"  Smart Mirror running at:")
+    print(f"    PC   -> http://localhost:8000")
+    print(f"    LAN  -> http://{lan_ip}:8000")
+    print(f"\n  Google Console: add this as Authorized Redirect URI:")
+    print(f"    http://{lan_ip}:8000/auth/google/callback")
+    print("="*60 + "\n")

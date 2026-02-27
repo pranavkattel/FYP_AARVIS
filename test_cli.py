@@ -248,6 +248,16 @@ def run_cli():
     first_name = user['full_name'].split()[0]
     session_id = str(uuid.uuid4())
 
+    # Set per-user Google credential context so calendar/gmail tools use
+    # this user's personal OAuth tokens instead of the legacy pickle files.
+    try:
+        import calender as _cal_mod
+        from services.gmail_service import set_current_user as _gmail_set_user
+        _cal_mod.set_current_user(user['username'])
+        _gmail_set_user(user['username'])
+    except Exception:
+        pass
+
     print(f"\nLogged in as: {user['full_name']} ({user['username']})")
     print(f"   Location: {user.get('location', 'N/A')}")
     print(f"   Interests: {user.get('interests', 'N/A')}")

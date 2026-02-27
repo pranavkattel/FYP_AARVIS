@@ -14,6 +14,16 @@ const INITIAL_CHECK_DELAY = 5000; // 5 seconds initial delay
 
 // Check authentication on load
 async function checkAuth() {
+    // Pick up token passed via URL (e.g. after Google OAuth redirect)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken) {
+        localStorage.setItem('sessionToken', urlToken);
+        // Clean the token out of the URL without reloading
+        const clean = window.location.pathname;
+        window.history.replaceState({}, '', clean);
+    }
+
     const sessionToken = localStorage.getItem('sessionToken');
     
     if (!sessionToken) {

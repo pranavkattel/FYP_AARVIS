@@ -10,8 +10,45 @@ from datetime import datetime, timedelta
 # Use 'readonly' for read-only access, or 'calendar' for full access
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-def authenticate_google_calendar():
-    """Authenticate and return Google Calendar service."""
+# ── Per-user context ────────────────────────────────────────────────────────
+# Set this before calling any calendar function so tools use the right account.
+_current_username: str | None = None
+
+def set_current_user(username: str | None) -> None:
+    """Set the active user so calendar calls use their personal credentials."""
+    global _current_username
+    _current_username = username
+
+
+def authenticate_google_calendar(username: str | None = None):
+    """
+    Authenticate and return Google Calendar service.
+
+    If *username* is provided (or the module-level _current_username is set)
+    the function loads that user's OAuth tokens stored during registration.
+    Otherwise it falls back to the legacy single-user pickle-file approach.
+    """
+    resolved_user = username or _current_username
+
+    # ── Per-user path (Google Sign-In users) ──────────────────────────────
+    if resolved_user:
+        try:
+            from database import get_user_google_tokens, update_google_tokens
+            from services.google_oauth import credentials_from_db
+            token_row = get_user_google_tokens(resolved_user)
+            if token_row:
+                creds = credentials_from_db(token_row)
+                if creds.token != token_row.get("google_access_token"):
+                    update_google_tokens(resolved_user, {
+                        "access_token":  creds.token,
+                        "refresh_token": creds.refresh_token,
+                        "expiry":        creds.expiry.isoformat() if creds.expiry else None,
+                    })
+                return build('calendar', 'v3', credentials=creds, cache_discovery=False)
+        except Exception as e:
+            print(f"[Calendar] Per-user credential load failed for {resolved_user}: {e}. Falling back to pickle.")
+
+    # ── Legacy single-user path (pickle file) ─────────────────────────────
     creds = None
     
     # Token file stores user's access and refresh tokens
@@ -32,7 +69,7 @@ def authenticate_google_calendar():
         with open('token.pickle', 'wb') as token:
             pickle.dump(creds, token)
     
-    return build('calendar', 'v3', credentials=creds)
+    return build('calendar', 'v3', credentials=creds, cache_discovery=False)
 
 def get_upcoming_events(max_results=10):
     """Get upcoming events from Google Calendar."""

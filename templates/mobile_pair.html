@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Mirror Setup</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            display: flex; align-items: center; justify-content: center; padding: 24px;
+        }
+        .card {
+            background: #fff; border-radius: 20px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            padding: 40px 28px 32px;
+            width: 100%; max-width: 360px; text-align: center;
+        }
+        .logo { font-size: 56px; margin-bottom: 12px; }
+        h1 { font-size: 22px; color: #1a1a2e; margin-bottom: 8px; }
+        .sub { color: #888; font-size: 14px; margin-bottom: 22px; line-height: 1.6; }
+        .steps {
+            background: rgba(102,126,234,.08); border-radius: 10px;
+            padding: 14px 16px; margin-bottom: 24px; text-align: left;
+        }
+        .step { display: flex; gap: 10px; font-size: 13px; color: #555; margin-bottom: 8px; line-height: 1.5; }
+        .step:last-child { margin-bottom: 0; }
+        .num { font-weight: 700; color: #667eea; min-width: 18px; }
+        .btn-google {
+            display: flex; align-items: center; justify-content: center; gap: 12px;
+            width: 100%; padding: 16px;
+            background: #fff; color: #3c4043;
+            border: 1.5px solid #dadce0; border-radius: 12px;
+            font-size: 16px; font-weight: 600; text-decoration: none;
+            transition: box-shadow .2s, border-color .2s;
+        }
+        .btn-google:active { box-shadow: 0 3px 14px rgba(0,0,0,0.15); }
+        .err-box {
+            display: none; background: rgba(244,67,54,.08);
+            border-radius: 10px; padding: 12px; margin-top: 14px;
+            color: #c62828; font-size: 13px; line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">🪞</div>
+        <h1>Smart Mirror Setup</h1>
+        <p class="sub">Sign in with Google on your phone to connect Gmail &amp; Calendar.</p>
+
+        <div class="steps">
+            <div class="step"><span class="num">1.</span><span>Tap the button below and sign in with Google</span></div>
+            <div class="step"><span class="num">2.</span><span>Allow access to Gmail &amp; Calendar when prompted</span></div>
+            <div class="step"><span class="num">3.</span><span>Look at your <strong>PC screen</strong> — face registration starts there automatically</span></div>
+        </div>
+
+        <a id="googleBtn" href="#" class="btn-google">
+            <svg width="22" height="22" viewBox="0 0 48 48">
+                <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.2 33.3 29.6 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5 12.7 4.5 3.5 13.7 3.5 25S12.7 45.5 24 45.5c11 0 20.5-8 20.5-20.5 0-1.4-.1-2.7-.5-5z"/>
+                <path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 17 19.3 14 24 14c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5c-7.6 0-14.2 4.3-17.7 10.2z"/>
+                <path fill="#FBBC05" d="M24 45.5c5.5 0 10.4-1.9 14.2-5.1l-6.6-5.4C29.6 36.8 27 37.5 24 37.5c-5.5 0-10.2-3.6-11.8-8.6l-7 5.4C8.3 41.4 15.5 45.5 24 45.5z"/>
+                <path fill="#EA4335" d="M44.5 20H24v8.5h11.7c-.8 2.3-2.3 4.2-4.3 5.5l6.6 5.4c3.9-3.6 6-8.9 6-15.4 0-1.4-.1-2.7-.5-5z"/>
+            </svg>
+            Sign in with Google
+        </a>
+
+        <div class="err-box" id="errBox">
+            QR code expired. Please go back to your PC, refresh the page, and scan again.
+        </div>
+    </div>
+
+    <script>
+        const PAIR_TOKEN = '{{ pair_token }}';
+        // Use this page's own origin (LAN IP) — redirect_uri must be reachable from phone
+        document.getElementById('googleBtn').href =
+            `${window.location.origin}/auth/google?intent=register&pair=${encodeURIComponent(PAIR_TOKEN)}`;
+    </script>
+</body>
+</html>

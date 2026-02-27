@@ -1,7 +1,10 @@
 import requests
+import os
 
-# Trello credentials
-
+# Trello credentials - set these as environment variables
+API_KEY = os.getenv("TRELLO_API_KEY", "")
+TOKEN = os.getenv("TRELLO_TOKEN", "")
+BOARD_ID = os.getenv("TRELLO_BOARD_ID", "")
 
 def create_list(name, pos="bottom"):
     """Create a new list on the board"""

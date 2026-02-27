@@ -9,13 +9,13 @@ from datetime import datetime, timedelta
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Bind all tools to Ollama
-# model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
+model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
 
-model = ChatGoogleGenerativeAI(
-    model="gemini-3-flash-preview",
-    temperature=0.7,
-    google_api_key="AIzaSyAan1nl_ICk0HebB1sQEflRDEEi2BPobbg"
-).bind_tools(tools)
+# model = ChatGoogleGenerativeAI(
+#     model="gemini-3-flash-preview",
+#     temperature=0.7,
+#     google_api_key=""
+# ).bind_tools(tools)
 
 SYSTEM_PROMPT_TEMPLATE = """/no_think
 You are AARVIS, a smart mirror voice assistant. You speak naturally and concisely.
@@ -33,7 +33,8 @@ STRICT RULES YOU MUST FOLLOW:
 7. If the user asks about their schedule/meetings, call get_calendar_today. Do NOT create anything.
 8. If unsure what the user wants, ASK — do not guess.
 9. Calendar tools return event_id values. Remember them — you need event_id to update or delete events.
-10. Do NOT wrap your response in <think> tags or output any internal reasoning."""
+10. Do NOT wrap your response in <think> tags or output any internal reasoning.
+11. For ALL email sending requests — whether the user wants you to write it for them ('write an email to John saying he is fired') OR provides explicit content — use send_email. If the user only gives a topic, leave subject/body empty and it will auto-compose. If they give you the full content, pass subject and body directly."""
 
 
 def model_call(state: AgentState) -> AgentState:

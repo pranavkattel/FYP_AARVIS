@@ -243,34 +243,88 @@ def get_emails(max_results: int = 5) -> str:
 
 
 @tool
-def draft_and_send_email(to: str, subject: str, body: str) -> str:
+def send_email(to: str, topic: str, subject: str = "", body: str = "", additional_context: str = "") -> str:
     """
-    Send an email to a recipient. Call this when the user wants to send, compose, or draft an email.
-    'to' can be either an email address OR a person's name (will be looked up in contacts.csv).
-    Always confirm the recipient, subject, and body with the user before calling this tool.
-    """
-    # If 'to' doesn't look like an email, try contacts lookup
-    if '@' not in to:
-        email = lookup_contact(to)
-        if email:
-            to = email
-        else:
-            return f"Could not find email for '{to}' in contacts. Ask the user for the email address."
+    Send an email. Handles two modes automatically:
 
+    MODE 1 — Auto-compose (preferred): User gives a short description and wants the email written for them.
+      Use when the user says things like:
+      - 'write an email to John saying he is fired'
+      - 'send an email to Sarah about the meeting cancellation'
+      - 'generate a professional email to HR about the new policy'
+      Provide 'to' and 'topic'. Leave 'subject' and 'body' empty — the email is composed automatically.
+
+    MODE 2 — Direct send: User provides the full email content themselves.
+      Provide 'to', 'subject', and 'body' explicitly. 'topic' can be a short label.
+
+    'to' can be a name (looked up in contacts.csv) or a direct email address.
+    'additional_context' adds extra detail when auto-composing (optional).
+    """
+    import re as _re
+    import base64
+    from email.mime.text import MIMEText
+
+    # Resolve recipient
+    recipient_email = to
+    recipient_label = to
+    if '@' not in to:
+        found = lookup_contact(to)
+        if found:
+            recipient_email = found
+            recipient_label = f"{to} ({found})"
+        else:
+            return f"Could not find an email address for '{to}' in contacts. Please provide a direct email address."
+
+    # MODE 2: body already provided — send directly
+    if body.strip():
+        final_subject = subject.strip() or topic.strip().capitalize()
+        final_body = body.strip()
+    else:
+        # MODE 1: auto-compose from topic
+        try:
+            from langchain_ollama import ChatOllama
+            from langchain_core.messages import HumanMessage, SystemMessage as SM
+
+            composer = ChatOllama(model="qwen3:4b", temperature=0.7)
+            context_line = f"\nAdditional context: {additional_context}" if additional_context.strip() else ""
+            compose_prompt = (
+                f"Write a complete, professional email on the following topic.\n"
+                f"Topic: {topic}{context_line}\n\n"
+                f"Output ONLY the email — include a clear Subject line at the top (format: 'Subject: ...'),"
+                f" a proper greeting, detailed body paragraphs, and a professional sign-off.\n"
+                f"Do NOT include any explanation outside the email itself."
+            )
+            response = composer.invoke([SM(content="/no_think"), HumanMessage(content=compose_prompt)])
+            composed = _re.sub(r"<think>.*?</think>", "", response.content, flags=_re.DOTALL).strip()
+
+            # Extract Subject line from composed text
+            final_subject = subject.strip() or topic.strip().capitalize()
+            final_body = composed
+            for line in composed.splitlines():
+                if line.lower().startswith("subject:"):
+                    final_subject = line[len("subject:"):].strip()
+                    final_body = composed[composed.index(line) + len(line):].strip()
+                    break
+        except Exception as e:
+            return f"Failed to compose email: {e}"
+
+    # Send
     try:
         from services.gmail_service import get_gmail_service
-        import base64
-        from email.mime.text import MIMEText
 
         service = get_gmail_service()
-        message = MIMEText(body)
-        message['to'] = to
-        message['subject'] = subject
+        message = MIMEText(final_body)
+        message['to'] = recipient_email
+        message['subject'] = final_subject
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         service.users().messages().send(userId='me', body={'raw': raw}).execute()
-        return f"Email sent to {to} with subject '{subject}'."
+        return (
+            f"Email sent to {recipient_label}.\n"
+            f"Subject: {final_subject}\n\n"
+            f"--- Email Body ---\n{final_body}"
+        )
     except Exception as e:
-        return f"Failed to send email: {e}"
+        return f"Email failed to send: {e}\n\nComposed email:\nSubject: {final_subject}\n\n{final_body}"
 
 
 @tool
@@ -318,6 +372,6 @@ tools = [
     get_weather,
     get_news,
     get_emails,
-    draft_and_send_email,
+    send_email,
     summarize_email_by_sender,
 ]
