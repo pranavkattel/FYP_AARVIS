@@ -27,43 +27,58 @@
         .step { display: flex; gap: 10px; font-size: 13px; color: #555; margin-bottom: 8px; line-height: 1.5; }
         .step:last-child { margin-bottom: 0; }
         .num { font-weight: 700; color: #667eea; min-width: 18px; }
-        .btn-google {
+        .btn-auth {
             display: flex; align-items: center; justify-content: center; gap: 12px;
             width: 100%; padding: 16px;
-            background: #fff; color: #3c4043;
-            border: 1.5px solid #dadce0; border-radius: 12px;
-            font-size: 16px; font-weight: 600; text-decoration: none;
-            transition: box-shadow .2s, border-color .2s;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff; border: none; border-radius: 12px;
+            font-size: 16px; font-weight: 600; cursor: pointer;
+            transition: opacity .2s;
         }
-        .btn-google:active { box-shadow: 0 3px 14px rgba(0,0,0,0.15); }
+        .btn-auth:hover { opacity: .9; }
+        .btn-auth:disabled { opacity: .5; cursor: default; }
+        .success {
+            display: none; background: rgba(56,142,60,.07);
+            border: 1.5px solid #a5d6a7; border-radius: 12px;
+            padding: 20px 16px; margin-top: 20px;
+            color: #2e7d32; font-size: 14px; line-height: 1.8;
+        }
+        .success .tick { font-size: 40px; margin-bottom: 8px; }
         .err-box {
             display: none; background: rgba(244,67,54,.08);
             border-radius: 10px; padding: 12px; margin-top: 14px;
             color: #c62828; font-size: 13px; line-height: 1.5;
         }
+        .spinner {
+            display: inline-block; width: 18px; height: 18px;
+            border: 3px solid rgba(255,255,255,.3); border-top-color: #fff;
+            border-radius: 50%; animation: spin .7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="card">
         <div class="logo">🪞</div>
         <h1>Smart Mirror Setup</h1>
-        <p class="sub">Sign in with Google on your phone to connect Gmail &amp; Calendar.</p>
+        <p class="sub">Tap below to authorize your Smart Mirror to access Gmail &amp; Calendar.</p>
 
         <div class="steps">
-            <div class="step"><span class="num">1.</span><span>Tap the button below and sign in with Google</span></div>
-            <div class="step"><span class="num">2.</span><span>Allow access to Gmail &amp; Calendar when prompted</span></div>
-            <div class="step"><span class="num">3.</span><span>Look at your <strong>PC screen</strong> — face registration starts there automatically</span></div>
+            <div class="step"><span class="num">1.</span><span>Tap the button &mdash; this sends a signal to your PC</span></div>
+            <div class="step"><span class="num">2.</span><span>Watch your <strong>PC screen</strong> &mdash; Google sign-in opens there automatically</span></div>
+            <div class="step"><span class="num">3.</span><span>Sign in on the PC and allow Gmail &amp; Calendar access</span></div>
         </div>
 
-        <a id="googleBtn" href="#" class="btn-google">
-            <svg width="22" height="22" viewBox="0 0 48 48">
-                <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.2 33.3 29.6 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5 12.7 4.5 3.5 13.7 3.5 25S12.7 45.5 24 45.5c11 0 20.5-8 20.5-20.5 0-1.4-.1-2.7-.5-5z"/>
-                <path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 17 19.3 14 24 14c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5c-7.6 0-14.2 4.3-17.7 10.2z"/>
-                <path fill="#FBBC05" d="M24 45.5c5.5 0 10.4-1.9 14.2-5.1l-6.6-5.4C29.6 36.8 27 37.5 24 37.5c-5.5 0-10.2-3.6-11.8-8.6l-7 5.4C8.3 41.4 15.5 45.5 24 45.5z"/>
-                <path fill="#EA4335" d="M44.5 20H24v8.5h11.7c-.8 2.3-2.3 4.2-4.3 5.5l6.6 5.4c3.9-3.6 6-8.9 6-15.4 0-1.4-.1-2.7-.5-5z"/>
-            </svg>
-            Sign in with Google
-        </a>
+        <button class="btn-auth" id="authBtn" onclick="trigger()">
+            &#128241; Authorize Smart Mirror
+        </button>
+
+        <div class="success" id="successBox">
+            <div class="tick">&#9989;</div>
+            <strong>Signal sent!</strong><br>
+            Google sign-in is now opening on your <strong>PC</strong>.<br>
+            Complete it there &mdash; you can put your phone away.
+        </div>
 
         <div class="err-box" id="errBox">
             QR code expired. Please go back to your PC, refresh the page, and scan again.
@@ -72,9 +87,26 @@
 
     <script>
         const PAIR_TOKEN = '{{ pair_token }}';
-        // Use this page's own origin (LAN IP) — redirect_uri must be reachable from phone
-        document.getElementById('googleBtn').href =
-            `${window.location.origin}/auth/google?intent=register&pair=${encodeURIComponent(PAIR_TOKEN)}`;
+
+        async function trigger() {
+            const btn = document.getElementById('authBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>&nbsp; Sending...';
+            document.getElementById('errBox').style.display = 'none';
+            try {
+                const res = await fetch(`/api/pair-trigger/${PAIR_TOKEN}`, { method: 'POST' });
+                if (res.ok) {
+                    btn.style.display = 'none';
+                    document.getElementById('successBox').style.display = 'block';
+                } else {
+                    throw new Error();
+                }
+            } catch(e) {
+                btn.disabled = false;
+                btn.innerHTML = '&#128241; Authorize Smart Mirror';
+                document.getElementById('errBox').style.display = 'block';
+            }
+        }
     </script>
 </body>
 </html>

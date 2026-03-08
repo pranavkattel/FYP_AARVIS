@@ -278,13 +278,14 @@
             try {
                 const res = await fetch(`/api/pair-status/${PAIR_TOKEN}`);
                 const data = await res.json();
-                if (data.status === 'complete' && data.session_token) {
+                if (data.status === 'triggered') {
                     clearInterval(pairPollInterval);
                     document.getElementById('qrcode').style.display = 'none';
-                    document.getElementById('qrUrl').style.display = 'none';
+                    document.getElementById('pairOk').textContent = '\u2713 Phone connected! Opening Google sign-in...';
                     document.getElementById('pairOk').style.display = 'block';
-                    localStorage.setItem('sessionToken', data.session_token);
-                    setTimeout(() => { window.location.href = data.dest || '/?token=' + data.session_token; }, 900);
+                    setTimeout(() => {
+                        window.location.href = `/auth/google?intent=login&pair=${PAIR_TOKEN}`;
+                    }, 600);
                 }
             } catch(e) {}
         }

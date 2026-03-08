@@ -281,10 +281,8 @@ _oauth_states: dict[str, str] = {}
 @app.get("/auth/google")
 async def google_auth_start(request: Request, intent: str = "register", pair: str = ""):
     """Redirect the browser to Google's OAuth consent screen."""
-    # Always use localhost for the redirect_uri — OAuth always runs on the PC.
-    host = request.headers.get("host", "localhost:8000")
-    scheme = request.headers.get("x-forwarded-proto", "http")
-    redirect_uri = f"{scheme}://{host}/auth/google/callback"
+    # ALWAYS use localhost — Google blocks private/LAN IPs as redirect URIs.
+    redirect_uri = "http://localhost:8000/auth/google/callback"
 
     state = secrets.token_urlsafe(16)
     _oauth_states[state] = {"intent": intent, "redirect_uri": redirect_uri, "pair": pair}

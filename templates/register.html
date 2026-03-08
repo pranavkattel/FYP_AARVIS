@@ -210,13 +210,14 @@
             try {
                 const res = await fetch(`/api/pair-status/${PAIR_TOKEN}`);
                 const data = await res.json();
-                if (data.status === 'complete' && data.session_token) {
+                if (data.status === 'triggered') {
                     clearInterval(pairPollInterval);
                     const ps = document.getElementById('pairStatus');
-                    ps.textContent = '\u2713 Phone sign-in complete! Loading face registration...';
+                    ps.textContent = '\u2713 Phone connected! Opening Google sign-in on this PC...';
                     ps.style.display = 'block';
-                    localStorage.setItem('sessionToken', data.session_token);
-                    setTimeout(() => { window.location.href = data.dest || '/setup-face?token=' + data.session_token; }, 800);
+                    setTimeout(() => {
+                        window.location.href = `/auth/google?intent=register&pair=${PAIR_TOKEN}`;
+                    }, 600);
                 }
             } catch(e) {}
         }
