@@ -1,8 +1,28 @@
+import re
+
 import numpy as np
 
 
 # Cache the Kokoro pipeline so it's only loaded once
 _kokoro_pipeline = None
+
+_EMOJI_TTS_PATTERN = re.compile(
+    "["
+    "\U0001F1E6-\U0001F1FF"  # flags
+    "\U0001F300-\U0001FAFF"  # emoji and pictographs
+    "\U00002700-\U000027BF"  # dingbats
+    "\U000024C2-\U0001F251"  # enclosed characters and misc emoji
+    "\u200d"                 # zero-width joiner
+    "\uFE0E\uFE0F"          # variation selectors
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _strip_emoji_for_tts(text: str) -> str:
+    cleaned = _EMOJI_TTS_PATTERN.sub(" ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 def _get_pipeline():
     global _kokoro_pipeline
@@ -24,6 +44,10 @@ def speak(text: str, voice: str = 'af_heart', speed: float = 1.0) -> None:
     """
     try:
         import sounddevice as sd
+
+        text = _strip_emoji_for_tts(text)
+        if not text:
+            return
 
         pipeline = _get_pipeline()
         generator = pipeline(text, voice=voice, speed=speed, split_pattern=r'\n+')
@@ -56,6 +80,10 @@ def speak_sentence(text: str, voice: str = 'af_heart', speed: float = 1.0) -> No
     """
     try:
         import sounddevice as sd
+        text = _strip_emoji_for_tts(text)
+        if not text:
+            return
+
         pipeline = _get_pipeline()
         for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r'\n+'):
             sd.play(audio, samplerate=24000)
@@ -73,6 +101,10 @@ def get_sentence_audio_bytes(text: str, voice: str = 'af_heart', speed: float = 
     import wave
 
     try:
+        text = _strip_emoji_for_tts(text)
+        if not text:
+            return b""
+
         pipeline = _get_pipeline()
         all_audio = []
         for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r'\n+'):
@@ -103,6 +135,10 @@ def get_audio_bytes(text: str, voice: str = 'af_heart', speed: float = 1.0) -> b
     import wave
 
     try:
+        text = _strip_emoji_for_tts(text)
+        if not text:
+            return b""
+
         pipeline = _get_pipeline()
         all_audio = []
 

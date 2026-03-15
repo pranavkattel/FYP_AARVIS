@@ -195,6 +195,14 @@
     }, 3800);
   }
 
+  function stripEmojiForSpeech(text) {
+    return text
+      .replace(/[\u200D\uFE0E\uFE0F]/gu, " ")
+      .replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}\u{24C2}-\u{1F251}]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function speakIntro(activeName) {
     if (!("speechSynthesis" in window)) {
       console.warn("Speech Synthesis API is not supported in this browser.");
@@ -208,7 +216,12 @@
       })
     );
 
-    const utterance = new SpeechSynthesisUtterance(lines.join(" \n"));
+    const spokenText = stripEmojiForSpeech(lines.join(" \n"));
+    if (!spokenText) {
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(spokenText);
     utterance.rate = 1;
     utterance.pitch = 1;
 
