@@ -281,11 +281,29 @@
                 if (data.status === 'triggered') {
                     clearInterval(pairPollInterval);
                     document.getElementById('qrcode').style.display = 'none';
-                    document.getElementById('pairOk').textContent = '\u2713 Phone connected! Opening Google sign-in...';
+                    document.getElementById('pairOk').textContent = '\u2713 Phone requested PC fallback. Opening Google sign-in...';
                     document.getElementById('pairOk').style.display = 'block';
                     setTimeout(() => {
                         window.location.href = `/auth/google?intent=login&pair=${PAIR_TOKEN}`;
-                    }, 600);
+                    }, 650);
+                    return;
+                }
+                if (data.status === 'complete') {
+                    clearInterval(pairPollInterval);
+                    document.getElementById('qrcode').style.display = 'none';
+                    if (data.session_token) {
+                        localStorage.setItem('sessionToken', data.session_token);
+                    }
+                    if (data.redirect_pc) {
+                        document.getElementById('pairOk').textContent = '\u2713 Google done on phone. Continue face setup on this PC...';
+                        document.getElementById('pairOk').style.display = 'block';
+                        setTimeout(() => {
+                            window.location.href = data.dest || '/setup-face';
+                        }, 700);
+                        return;
+                    }
+                    document.getElementById('pairOk').textContent = '\u2713 Google sign-in completed on phone.';
+                    document.getElementById('pairOk').style.display = 'block';
                 }
             } catch(e) {}
         }

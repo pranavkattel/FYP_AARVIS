@@ -213,11 +213,29 @@
                 if (data.status === 'triggered') {
                     clearInterval(pairPollInterval);
                     const ps = document.getElementById('pairStatus');
-                    ps.textContent = '\u2713 Phone connected! Opening Google sign-in on this PC...';
+                    ps.textContent = '\u2713 Phone requested PC fallback. Opening Google sign-in here...';
                     ps.style.display = 'block';
                     setTimeout(() => {
                         window.location.href = `/auth/google?intent=register&pair=${PAIR_TOKEN}`;
-                    }, 600);
+                    }, 650);
+                    return;
+                }
+                if (data.status === 'complete') {
+                    clearInterval(pairPollInterval);
+                    const ps = document.getElementById('pairStatus');
+                    if (data.session_token) {
+                        localStorage.setItem('sessionToken', data.session_token);
+                    }
+                    if (data.redirect_pc) {
+                        ps.textContent = '\u2713 Google done on phone. Continue face setup on this PC...';
+                        ps.style.display = 'block';
+                        setTimeout(() => {
+                            window.location.href = data.dest || '/setup-face';
+                        }, 700);
+                        return;
+                    }
+                    ps.textContent = '\u2713 Google sign-in completed on phone.';
+                    ps.style.display = 'block';
                 }
             } catch(e) {}
         }

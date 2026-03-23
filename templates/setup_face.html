@@ -131,12 +131,35 @@
         capturing = false;
         setOverlay('Processing…');
         try {
+            const token = localStorage.getItem('sessionToken') || '';
             const res = await fetch('/api/face/enroll', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({ images: captured })
             });
+            if (res.status === 401 && token) {
+                const retry = await fetch(`/api/face/enroll?token=${encodeURIComponent(token)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ images: captured })
+                });
+                const retryData = await retry.json();
+                if (retryData.success) {
+                    stopStream();
+                    document.getElementById('videoWrap').style.display = 'none';
+                    document.getElementById('success').style.display = 'block';
+                    setTimeout(() => window.location.href = '/', 1800);
+                } else {
+                    stopStream();
+                    document.getElementById('videoWrap').style.display = 'none';
+                    setMsg(retryData.message || 'Could not detect a face. Please try again.');
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('startBtn').style.display = 'block';
+                }
+                return;
+            }
             const data = await res.json();
             if (data.success) {
                 stopStream();

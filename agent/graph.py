@@ -9,13 +9,13 @@ from datetime import datetime, timedelta
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Bind all tools to Ollama
-model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
+#model = ChatOllama(model="qwen3:4b", temperature=0.7).bind_tools(tools)
 
-# model = ChatGoogleGenerativeAI(
-#     model="gemini-3-flash-preview",
-#     temperature=0.7,
-#     google_api_key=""
-# ).bind_tools(tools)
+model = ChatGoogleGenerativeAI(
+    model="gemini-3-flash-preview",
+    temperature=0.7,
+    google_api_key="AIzaSyAgmDcm8g_RbK0PJ4PIilJFJuxLJYzM2s0"
+).bind_tools(tools)
 
 SYSTEM_PROMPT_TEMPLATE = """/no_think
 You are AARVIS, a smart mirror voice assistant. You speak naturally and concisely.

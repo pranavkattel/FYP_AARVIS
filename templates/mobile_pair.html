@@ -49,6 +49,12 @@
             border-radius: 10px; padding: 12px; margin-top: 14px;
             color: #c62828; font-size: 13px; line-height: 1.5;
         }
+        .btn-fallback {
+            display: none; align-items: center; justify-content: center; gap: 10px;
+            width: 100%; padding: 12px; margin-top: 10px;
+            background: #fff; color: #3c4043; border: 1.5px solid #dadce0; border-radius: 10px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+        }
         .spinner {
             display: inline-block; width: 18px; height: 18px;
             border: 3px solid rgba(255,255,255,.3); border-top-color: #fff;
@@ -61,52 +67,78 @@
     <div class="card">
         <div class="logo">🪞</div>
         <h1>Smart Mirror Setup</h1>
-        <p class="sub">Tap below to authorize your Smart Mirror to access Gmail &amp; Calendar.</p>
+        <p class="sub">Sign in with Google on your phone to connect Gmail &amp; Calendar.</p>
 
         <div class="steps">
-            <div class="step"><span class="num">1.</span><span>Tap the button &mdash; this sends a signal to your PC</span></div>
-            <div class="step"><span class="num">2.</span><span>Watch your <strong>PC screen</strong> &mdash; Google sign-in opens there automatically</span></div>
-            <div class="step"><span class="num">3.</span><span>Sign in on the PC and allow Gmail &amp; Calendar access</span></div>
+            <div class="step"><span class="num">1.</span><span>Tap the button to open Google sign-in on this phone</span></div>
+            <div class="step"><span class="num">2.</span><span>Choose your Google account and allow Gmail &amp; Calendar access</span></div>
+            <div class="step"><span class="num">3.</span><span>If face setup is needed, your PC will continue there automatically</span></div>
         </div>
 
-        <button class="btn-auth" id="authBtn" onclick="trigger()">
-            &#128241; Authorize Smart Mirror
+        <button class="btn-auth" id="authBtn" onclick="startGoogle()">
+            Continue with Google
         </button>
 
         <div class="success" id="successBox">
             <div class="tick">&#9989;</div>
-            <strong>Signal sent!</strong><br>
-            Google sign-in is now opening on your <strong>PC</strong>.<br>
-            Complete it there &mdash; you can put your phone away.
+            <strong>Google sign-in started.</strong><br>
+            Continue on this phone.<br>
+            Your PC will only be used if face setup is required.
         </div>
 
         <div class="err-box" id="errBox">
-            QR code expired. Please go back to your PC, refresh the page, and scan again.
+            Could not start Google sign-in. Please retry from your PC QR code.
         </div>
+
+        <button class="btn-fallback" id="pcFallbackBtn" onclick="triggerPcOAuth()">
+            Open Google sign-in on PC instead
+        </button>
     </div>
 
     <script>
         const PAIR_TOKEN = '{{ pair_token }}';
+        const INTENT = '{{ intent }}';
 
-        async function trigger() {
+        function startGoogle() {
             const btn = document.getElementById('authBtn');
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span>&nbsp; Sending...';
+            btn.innerHTML = '<span class="spinner"></span>&nbsp; Opening...';
             document.getElementById('errBox').style.display = 'none';
+            document.getElementById('successBox').style.display = 'block';
+            setTimeout(() => {
+                window.location.href = `/auth/google?intent=${encodeURIComponent(INTENT || 'register')}&pair=${encodeURIComponent(PAIR_TOKEN)}`;
+            }, 350);
+        }
+
+        async function triggerPcOAuth() {
+            const btn = document.getElementById('pcFallbackBtn');
+            btn.disabled = true;
+            btn.textContent = 'Sending to PC...';
             try {
                 const res = await fetch(`/api/pair-trigger/${PAIR_TOKEN}`, { method: 'POST' });
-                if (res.ok) {
-                    btn.style.display = 'none';
-                    document.getElementById('successBox').style.display = 'block';
-                } else {
-                    throw new Error();
-                }
-            } catch(e) {
+                if (!res.ok) throw new Error('trigger_failed');
+                document.getElementById('errBox').textContent = 'Sent to PC. Continue Google sign-in on your PC screen.';
+            } catch (e) {
+                document.getElementById('errBox').textContent = 'Could not notify PC. Refresh and try again.';
                 btn.disabled = false;
-                btn.innerHTML = '&#128241; Authorize Smart Mirror';
-                document.getElementById('errBox').style.display = 'block';
+                btn.textContent = 'Open Google sign-in on PC instead';
             }
         }
+
+        (function () {
+            const p = new URLSearchParams(window.location.search);
+            const err = p.get('error');
+            if (err === 'private_ip_callback') {
+                const errBox = document.getElementById('errBox');
+                errBox.style.display = 'block';
+                errBox.textContent = 'Google blocks OAuth callback on private IP URLs. Use PC fallback now, or configure a public HTTPS callback URL.';
+                document.getElementById('pcFallbackBtn').style.display = 'flex';
+                document.getElementById('successBox').style.display = 'none';
+                const authBtn = document.getElementById('authBtn');
+                authBtn.disabled = false;
+                authBtn.innerHTML = 'Continue with Google';
+            }
+        })();
     </script>
 </body>
 </html>

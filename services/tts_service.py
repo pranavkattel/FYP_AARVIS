@@ -1,6 +1,15 @@
 import re
+import os
 
 import numpy as np
+
+# ── Compatibility shim ─────────────────────────────────────────────────────
+# kokoro imports `is_offline_mode` from huggingface_hub, which was removed in
+# huggingface_hub >= 0.27. Inject it back before kokoro is loaded anywhere.
+import huggingface_hub as _hf_hub
+if not hasattr(_hf_hub, "is_offline_mode"):
+    _hf_hub.is_offline_mode = lambda: os.getenv("HF_HUB_OFFLINE", "0") == "1"
+# ──────────────────────────────────────────────────────────────────────────
 
 
 # Cache the Kokoro pipeline so it's only loaded once

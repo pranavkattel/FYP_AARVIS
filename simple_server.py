@@ -8,6 +8,7 @@ import json
 import asyncio
 import uuid
 import socket
+import ipaddress
 from pydantic import BaseModel
 from typing import Optional
 import secrets
@@ -16,6 +17,14 @@ import numpy as np
 import base64
 import pickle
 import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    # Optional dependency; environment variables can still be set by the shell.
+    pass
+
 from database import (
     create_user, verify_user, get_user_by_username, save_conversation, get_recent_context,
     create_google_user, get_user_by_google_id, get_user_google_tokens, update_google_tokens,
@@ -110,8 +119,8 @@ templates = Jinja2Templates(directory="templates")
 # Session storage (in production, use Redis or database)
 sessions = {}
 
-# Cross-device pairing: phone scans QR → triggers PC to open Google OAuth
-# {pair_token: {"status": "pending"|"triggered"}}
+# Cross-device pairing state shared between PC and phone.
+# {pair_token: {"status": "pending"|"complete", "intent": "register"|"login", ...}}
 pair_sessions = {}
 
 # Pydantic models for request validation
@@ -139,13 +148,13 @@ async def home(request: Request, session_token: Optional[str] = Cookie(None)):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     pair_token = secrets.token_urlsafe(16)
-    pair_sessions[pair_token] = {"status": "pending"}
+    pair_sessions[pair_token] = {"status": "pending", "intent": "login"}
     return templates.TemplateResponse("login.html", {"request": request, "pair_token": pair_token})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
     pair_token = secrets.token_urlsafe(16)
-    pair_sessions[pair_token] = {"status": "pending"}
+    pair_sessions[pair_token] = {"status": "pending", "intent": "register"}
     return templates.TemplateResponse("register.html", {"request": request, "pair_token": pair_token})
 
 @app.get("/setup-face", response_class=HTMLResponse)
@@ -278,11 +287,49 @@ async def logout(session_token: Optional[str] = Cookie(None)):
 # Temporary store for OAuth state tokens  {state_token: "register"|"login"}
 _oauth_states: dict[str, str] = {}
 
+
+def _resolve_oauth_redirect_uri(request: Request) -> str:
+    """Build callback URL from current host unless explicitly overridden."""
+    forced = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+    if forced:
+        return forced
+
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    scheme = forwarded_proto or request.url.scheme
+    host = forwarded_host or request.url.netloc
+
+    # Google blocks OAuth callbacks on private/LAN IPs for web client flows.
+    host_only = host.split(":", 1)[0]
+    ip_obj = None
+    try:
+        ip_obj = ipaddress.ip_address(host_only)
+    except ValueError:
+        # Non-IP hosts (e.g. localhost or domain) are fine.
+        ip_obj = None
+    if ip_obj and ip_obj.is_private and not ip_obj.is_loopback:
+        raise ValueError("private_ip_callback_blocked")
+
+    return f"{scheme}://{host}/auth/google/callback"
+
 @app.get("/auth/google")
 async def google_auth_start(request: Request, intent: str = "register", pair: str = ""):
     """Redirect the browser to Google's OAuth consent screen."""
-    # ALWAYS use localhost — Google blocks private/LAN IPs as redirect URIs.
-    redirect_uri = "http://localhost:8000/auth/google/callback"
+    try:
+        redirect_uri = _resolve_oauth_redirect_uri(request)
+    except ValueError as exc:
+        if str(exc) == "private_ip_callback_blocked" and pair:
+            return RedirectResponse(
+                url=f"/mobile-connect?pair={pair}&error=private_ip_callback",
+                status_code=302,
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Google OAuth callback on private IP is blocked. "
+                "Use localhost on PC or set GOOGLE_OAUTH_REDIRECT_URI to a public HTTPS callback."
+            ),
+        )
 
     state = secrets.token_urlsafe(16)
     _oauth_states[state] = {"intent": intent, "redirect_uri": redirect_uri, "pair": pair}
@@ -351,15 +398,19 @@ async def google_auth_callback(
     dest = f"/?token={token}" if has_face else f"/setup-face?token={token}"
 
     # If this OAuth was triggered from a phone (pair flow),
-    # store the session so the PC can pick it up, then send phone to pair-complete.
+    # store the session so the PC can pick it up.
     pair_token = state_data.get("pair", "") if isinstance(state_data, dict) else ""
     if pair_token and pair_token in pair_sessions:
+        needs_face_setup = not has_face
         pair_sessions[pair_token].update({
             "status": "complete",
             "session_token": token,
             "dest": dest,
+            "redirect_pc": needs_face_setup,
         })
-        redirect = RedirectResponse(url=f"/pair-complete", status_code=302)
+
+        mode = "face_on_pc" if needs_face_setup else "done_mobile"
+        redirect = RedirectResponse(url=f"/pair-complete?mode={mode}", status_code=302)
         redirect.set_cookie(key="session_token", value=token, httponly=True, max_age=86400, samesite="lax")
         return redirect
 
@@ -387,15 +438,16 @@ async def get_current_user(session_token: Optional[str] = Cookie(None)):
     return user
 
 @app.get("/pair-complete", response_class=HTMLResponse)
-async def pair_complete_page(request: Request):
-    return templates.TemplateResponse("pair_complete.html", {"request": request})
+async def pair_complete_page(request: Request, mode: str = "face_on_pc"):
+    return templates.TemplateResponse("pair_complete.html", {"request": request, "mode": mode})
 
 @app.get("/mobile-connect", response_class=HTMLResponse)
 async def mobile_connect(request: Request, pair: str = ""):
-    """Mobile landing page — phone scans QR, taps here to trigger PC OAuth."""
+    """Mobile landing page where phone completes Google OAuth."""
     if not pair or pair not in pair_sessions:
         return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>QR code expired. Please refresh the register page on your PC and scan again.</h3>")
-    return templates.TemplateResponse("mobile_pair.html", {"request": request, "pair_token": pair})
+    intent = pair_sessions[pair].get("intent", "register")
+    return templates.TemplateResponse("mobile_pair.html", {"request": request, "pair_token": pair, "intent": intent})
 
 @app.post("/api/pair-trigger/{pair_token}")
 async def pair_trigger(pair_token: str):
@@ -415,11 +467,18 @@ async def pair_status(pair_token: str):
     if entry["status"] == "complete":
         resp["session_token"] = entry.get("session_token")
         resp["dest"] = entry.get("dest", "/")
+        resp["redirect_pc"] = bool(entry.get("redirect_pc", False))
     return resp
 
 @app.get("/api/local-url")
 async def get_local_url(path: str = "/register"):
     """Return the LAN URL of this server so phone clients can connect."""
+    public_base = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if public_base:
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return {"url": f"{public_base}{path}"}
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -610,14 +669,15 @@ async def face_login(request: Request, response: Response):
         return {"success": False, "message": str(e)}
 
 @app.post("/api/face/enroll")
-async def face_enroll(request: Request, session_token: Optional[str] = Cookie(None)):
+async def face_enroll(request: Request, session_token: Optional[str] = Cookie(None), token: Optional[str] = None):
     """Enroll face for an already-logged-in user (e.g. after Google signup)."""
-    if not session_token or session_token not in sessions:
+    auth_token = session_token or token
+    if not auth_token or auth_token not in sessions:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if not FACE_RECOGNITION_AVAILABLE:
         return {"success": False, "message": "Face recognition not available"}
 
-    username = sessions[session_token]
+    username = sessions[auth_token]
     data = await request.json()
     images = data.get("images", [])  # list of base64 frames
 
@@ -749,7 +809,6 @@ async def websocket_endpoint(
                     # Base64-encoded audio from browser
                     audio_b64 = data.get("data", "")
                     if audio_b64:
-                        await websocket.send_json({"type": "voice_state", "state": "thinking"})
                         audio_bytes = base64.b64decode(audio_b64)
                         transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes)
                         if transcript:
@@ -764,7 +823,6 @@ async def websocket_endpoint(
             elif "bytes" in ws_message:
                 # Raw binary audio
                 audio_bytes = ws_message["bytes"]
-                await websocket.send_json({"type": "voice_state", "state": "thinking"})
                 transcript = await asyncio.to_thread(transcribe_audio_bytes, audio_bytes)
                 if transcript:
                     print(f"[VOICE] \"{transcript}\"")
@@ -844,6 +902,17 @@ async def websocket_endpoint(
                         chunk = event.get("data", {}).get("chunk")
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             token = chunk.content
+                            # Gemini streaming returns list of parts; normalize to str
+                            if isinstance(token, list):
+                                parts = []
+                                for part in token:
+                                    if isinstance(part, str):
+                                        parts.append(part)
+                                    elif isinstance(part, dict):
+                                        parts.append(part.get("text", ""))
+                                    elif hasattr(part, "text"):
+                                        parts.append(part.text)
+                                token = "".join(parts)
 
                             # Track whether we're inside a <think> block
                             if "<think>" in token:
@@ -1257,9 +1326,10 @@ if __name__ == "__main__":
     print("  Smart Mirror running at:")
     print(f"    PC   -> http://localhost:8000")
     print(f"    LAN  -> http://{_lan_ip}:8000")
-    print(f"\n  For phone QR login, add this to Google Cloud Console")
-    print(f"  under Authorized Redirect URIs (one time only):")
-    print(f"    http://{_lan_ip}:8000/auth/google/callback")
+    print(f"\n  OAuth redirect URI guidance:")
+    print(f"    - Always keep: http://localhost:8000/auth/google/callback")
+    print(f"    - For phone OAuth, use a PUBLIC HTTPS callback via GOOGLE_OAUTH_REDIRECT_URI")
+    print(f"      (private/LAN IP callbacks are blocked by Google)")
     print("="*60 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
@@ -1277,6 +1347,7 @@ def _print_lan_info():
     print(f"  Smart Mirror running at:")
     print(f"    PC   -> http://localhost:8000")
     print(f"    LAN  -> http://{lan_ip}:8000")
-    print(f"\n  Google Console: add this as Authorized Redirect URI:")
-    print(f"    http://{lan_ip}:8000/auth/google/callback")
+    print(f"\n  Google Console Redirect URIs:")
+    print(f"    http://localhost:8000/auth/google/callback")
+    print(f"    plus your public HTTPS callback if using phone OAuth")
     print("="*60 + "\n")

@@ -30,11 +30,22 @@
 <body>
     <div class="card">
         <div class="check">✅</div>
-        <h1>You're all set!</h1>
-        <p>Google sign-in was successful. Your Gmail and Calendar are now connected.</p>
-        <div class="pc-hint">
+        <h1 id="title">You're all set!</h1>
+        <p id="desc">Google sign-in was successful. Your Gmail and Calendar are now connected.</p>
+        <div class="pc-hint" id="pcHint">
             👀 Look at your PC screen — face registration is starting there now.
         </div>
     </div>
+
+    <script>
+        (function () {
+            const mode = '{{ mode }}';
+            if (mode === 'done_mobile') {
+                document.getElementById('title').textContent = 'Phone sign-in complete';
+                document.getElementById('desc').textContent = 'Google sign-in was successful on your phone. You can close this page.';
+                document.getElementById('pcHint').textContent = 'No PC action is needed right now.';
+            }
+        })();
+    </script>
 </body>
 </html>
