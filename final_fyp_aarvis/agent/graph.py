@@ -3,8 +3,8 @@ from langchain_core.messages import SystemMessage, AIMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from agent.state import AgentState
-from agent.tools import tools
+from final_fyp_aarvis.agent.state import AgentState
+from final_fyp_aarvis.agent.tools import tools
 from datetime import datetime, timedelta
 from langchain_google_genai import ChatGoogleGenerativeAI
 

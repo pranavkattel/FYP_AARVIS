@@ -9,16 +9,11 @@ import asyncio
 import uuid
 import socket
 import ipaddress
-import urllib.request
-import urllib.error
-import urllib.parse
-from pydantic import BaseModel
 from typing import Optional
 import secrets
 import cv2
 import numpy as np
 import base64
-import pickle
 import os
 
 try:
@@ -28,52 +23,21 @@ except Exception:
     # Optional dependency; environment variables can still be set by the shell.
     pass
 
-from database import (
+from final_fyp_aarvis.database.repository import (
     create_user, verify_user, get_user_by_username, save_conversation, get_recent_context,
     create_google_user, get_user_by_google_id, get_user_google_tokens, update_google_tokens,
     get_all_users, delete_user_by_id, admin_update_user,
 )
-from services.google_oauth import build_auth_url, exchange_code_for_tokens
+from final_fyp_aarvis.models.auth_models import LoginRequest, RegisterRequest
+from final_fyp_aarvis.services.face_storage import load_face_database, save_face_database
+from final_fyp_aarvis.services.google_oauth_service import build_auth_url, exchange_code_for_tokens
+from final_fyp_aarvis.services.speech_to_text import transcribe_audio_bytes
+from final_fyp_aarvis.config.settings import STATIC_DIR, TEMPLATES_DIR
 from langchain_core.messages import HumanMessage, AIMessage
-
-# ── Server-side STT via faster_whisper (shared with CLI) ──
-_whisper_model = None
-
-def _get_whisper_model():
-    """Lazy-load faster_whisper model (base, CPU, int8)."""
-    global _whisper_model
-    if _whisper_model is None:
-        from faster_whisper import WhisperModel
-        print("[STT] Loading Whisper model (base, CPU, int8)...")
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-        print("[STT] ✅ Whisper model loaded.")
-    return _whisper_model
-
-def transcribe_audio_bytes(audio_bytes: bytes) -> str | None:
-    """Transcribe raw audio bytes (WAV or webm) using faster_whisper. Returns text or None."""
-    import tempfile, wave, io
-
-    try:
-        model = _get_whisper_model()
-
-        # Browser MediaRecorder sends webm/opus — write to temp file for ffmpeg decode
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-
-        segments, info = model.transcribe(tmp_path, beam_size=5, language="en")
-        seg_list = list(segments)
-        text = " ".join(seg.text.strip() for seg in seg_list).strip()
-
-        os.unlink(tmp_path)
-        return text if text else None
-    except Exception as e:
-        print(f"[STT] Error: {e}")
-        return None
 
 # Import calendar functions
 try:
-    from calender import get_todays_events, get_upcoming_events
+    from final_fyp_aarvis.services.calendar_service import get_todays_events, get_upcoming_events
     CALENDAR_AVAILABLE = True
     print("[DEBUG] ✅ Calendar integration loaded successfully")
 except Exception as e:
@@ -93,22 +57,6 @@ except Exception as e:
     face_app = None
     print(f"[DEBUG] ❌ Face recognition not available: {e}")
 
-# Face database
-FACE_DB_FILE = "face_database.pkl"
-
-def load_face_database():
-    if os.path.exists(FACE_DB_FILE):
-        try:
-            with open(FACE_DB_FILE, 'rb') as f:
-                return pickle.load(f)
-        except:
-            return {}
-    return {}
-
-def save_face_database(db):
-    with open(FACE_DB_FILE, 'wb') as f:
-        pickle.dump(db, f)
-
 face_users_db = load_face_database()
 
 # Face detection cache (username -> last_seen_time)
@@ -116,95 +64,15 @@ face_detection_cache = {}
 
 app = FastAPI()
 print(f"[DEBUG] Calendar available: {CALENDAR_AVAILABLE}")
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Session storage (in production, use Redis or database)
 sessions = {}
 
-OAUTH_BROKER_BASE_URL = os.getenv("OAUTH_BROKER_BASE_URL", "").strip().rstrip("/")
-
 # Cross-device pairing state shared between PC and phone.
 # {pair_token: {"status": "pending"|"complete", "intent": "register"|"login", ...}}
 pair_sessions = {}
-
-
-def _broker_enabled() -> bool:
-    return bool(OAUTH_BROKER_BASE_URL)
-
-
-def _broker_request(method: str, path: str, payload: Optional[dict] = None, timeout: int = 12) -> dict:
-    if not _broker_enabled():
-        raise RuntimeError("oauth broker not configured")
-
-    url = f"{OAUTH_BROKER_BASE_URL}{path}"
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(url=url, data=data, headers=headers, method=method.upper())
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8") if exc.fp else str(exc)
-        raise RuntimeError(f"broker http {exc.code}: {detail}")
-    except Exception as exc:
-        raise RuntimeError(f"broker request failed: {exc}")
-
-
-def _create_local_session_from_google_claim(claim: dict, intent: str) -> dict:
-    profile = claim.get("profile") or {}
-    tokens = claim.get("tokens") or {}
-
-    google_id = profile.get("google_id")
-    if not google_id:
-        raise RuntimeError("broker claim missing google_id")
-
-    create_google_user(
-        google_id=google_id,
-        email=profile.get("email", ""),
-        full_name=profile.get("full_name", "Google User"),
-        tokens=tokens,
-    )
-
-    user = get_user_by_google_id(google_id)
-    if not user:
-        raise RuntimeError("failed to resolve local user after broker claim")
-
-    token = secrets.token_urlsafe(32)
-    sessions[token] = user["username"]
-
-    has_face = user["username"] in face_users_db and len(face_users_db[user["username"]]) > 0
-    if intent == "register":
-        # For register, force face setup on local machine if not enrolled yet.
-        redirect_pc = not has_face
-    else:
-        redirect_pc = not has_face
-
-    dest = f"/?token={token}" if has_face else f"/setup-face?token={token}"
-    return {
-        "session_token": token,
-        "dest": dest,
-        "redirect_pc": redirect_pc,
-    }
-
-# Pydantic models for request validation
-class RegisterRequest(BaseModel):
-    username: str
-    email: str
-    password: str
-    full_name: str
-    location: str
-    interests: str = ""
-    face_embeddings: Optional[list] = None  # Face embeddings for registration
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, session_token: Optional[str] = Cookie(None)):
@@ -217,36 +85,14 @@ async def home(request: Request, session_token: Optional[str] = Cookie(None)):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     pair_token = secrets.token_urlsafe(16)
-    pair_entry = {"status": "pending", "intent": "login"}
-
-    qr_url = ""
-    if _broker_enabled():
-        try:
-            broker_data = _broker_request("POST", "/pair/create", payload={"intent": "login"})
-            pair_entry["broker_pair"] = broker_data.get("pair")
-            qr_url = broker_data.get("mobile_url", "")
-        except Exception as exc:
-            print(f"[OAuthBroker] login pair create failed: {exc}")
-
-    pair_sessions[pair_token] = pair_entry
-    return templates.TemplateResponse("login.html", {"request": request, "pair_token": pair_token, "qr_url": qr_url})
+    pair_sessions[pair_token] = {"status": "pending", "intent": "login"}
+    return templates.TemplateResponse("login.html", {"request": request, "pair_token": pair_token})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
     pair_token = secrets.token_urlsafe(16)
-    pair_entry = {"status": "pending", "intent": "register"}
-
-    qr_url = ""
-    if _broker_enabled():
-        try:
-            broker_data = _broker_request("POST", "/pair/create", payload={"intent": "register"})
-            pair_entry["broker_pair"] = broker_data.get("pair")
-            qr_url = broker_data.get("mobile_url", "")
-        except Exception as exc:
-            print(f"[OAuthBroker] register pair create failed: {exc}")
-
-    pair_sessions[pair_token] = pair_entry
-    return templates.TemplateResponse("register.html", {"request": request, "pair_token": pair_token, "qr_url": qr_url})
+    pair_sessions[pair_token] = {"status": "pending", "intent": "register"}
+    return templates.TemplateResponse("register.html", {"request": request, "pair_token": pair_token})
 
 @app.get("/setup-face", response_class=HTMLResponse)
 async def setup_face_page(request: Request, session_token: Optional[str] = Cookie(None)):
@@ -553,36 +399,12 @@ async def pair_status(pair_token: str):
     """PC polls this to detect when phone has completed Google OAuth."""
     if pair_token not in pair_sessions:
         return {"status": "unknown"}
-
     entry = pair_sessions[pair_token]
-
-    broker_pair = entry.get("broker_pair")
-    if broker_pair and entry.get("status") != "complete":
-        try:
-            broker_status = _broker_request("GET", f"/pair/status/{broker_pair}")
-            state = broker_status.get("status", "pending")
-
-            if state == "complete":
-                claim = _broker_request("POST", f"/pair/claim/{broker_pair}")
-                local_session = _create_local_session_from_google_claim(claim, entry.get("intent", "register"))
-                entry.update({
-                    "status": "complete",
-                    "session_token": local_session["session_token"],
-                    "dest": local_session["dest"],
-                    "redirect_pc": bool(local_session["redirect_pc"]),
-                })
-            elif state in ("expired", "unknown"):
-                entry["status"] = state
-        except Exception as exc:
-            entry["broker_error"] = str(exc)
-
     resp = {"status": entry["status"]}
     if entry["status"] == "complete":
         resp["session_token"] = entry.get("session_token")
         resp["dest"] = entry.get("dest", "/")
         resp["redirect_pc"] = bool(entry.get("redirect_pc", False))
-    if entry.get("broker_error"):
-        resp["broker_error"] = entry.get("broker_error")
     return resp
 
 @app.get("/api/local-url")
@@ -867,8 +689,8 @@ async def websocket_endpoint(
     # ── Set per-user Google credential context so calendar/gmail tools
     #    automatically use this user's personal OAuth tokens.
     try:
-        import calender as _cal_mod
-        from services.gmail_service import set_current_user as _gmail_set_user
+        from final_fyp_aarvis.services import calendar_service as _cal_mod
+        from final_fyp_aarvis.services.gmail_service import set_current_user as _gmail_set_user
         _cal_mod.set_current_user(username)
         _gmail_set_user(username)
     except Exception:
@@ -877,7 +699,7 @@ async def websocket_endpoint(
     session_id = str(uuid.uuid4())
 
     # Import agent lazily to avoid circular imports and slow startup blocking
-    from agent.graph import agent
+    from final_fyp_aarvis.agent.graph import agent
 
     # Seed message history from DB — mirrors agent2_memory.py conversation_history pattern
     recent = get_recent_context(user['id'], limit=10)
@@ -897,7 +719,7 @@ async def websocket_endpoint(
 
     # ── Speak a welcome greeting via TTS ──
     try:
-        from services.tts_service import get_sentence_audio_bytes
+        from final_fyp_aarvis.services.tts_service import get_sentence_audio_bytes
         welcome_text = f"Welcome, {first_name}!"
         welcome_wav = await asyncio.to_thread(get_sentence_audio_bytes, welcome_text)
         if welcome_wav:
@@ -955,7 +777,7 @@ async def websocket_endpoint(
             _bye_normalised = user_text.lower().strip().rstrip('.!?,')
             if _bye_normalised in ('bye bye', 'bye-bye', 'byebye', 'bye', 'goodbye', 'good bye', 'log out', 'logout', 'sign out'):
                 try:
-                    from services.tts_service import get_sentence_audio_bytes as _bye_tts
+                    from final_fyp_aarvis.services.tts_service import get_sentence_audio_bytes as _bye_tts
                     bye_text = f"Goodbye, {first_name}. See you later!"
                     bye_wav = await asyncio.to_thread(_bye_tts, bye_text)
                     if bye_wav:
@@ -984,7 +806,7 @@ async def websocket_endpoint(
                 # to TTS immediately, so the user hears the first sentence
                 # while the model is still generating the rest.
                 import re as _re
-                from services.tts_service import get_sentence_audio_bytes
+                from final_fyp_aarvis.services.tts_service import get_sentence_audio_bytes
 
                 full_response = ""
                 sentence_buffer = ""
@@ -1342,7 +1164,7 @@ async def trigger_briefing(session_token: Optional[str] = Cookie(None)):
     first_name = user['full_name'].split()[0]
 
     # Fetch calendar events using existing function
-    from calender import get_todays_events as briefing_get_events
+    from final_fyp_aarvis.services.calendar_service import get_todays_events as briefing_get_events
     import httpx
 
     events = []
@@ -1409,7 +1231,7 @@ async def trigger_briefing(session_token: Optional[str] = Cookie(None)):
 
     # Speak it via Kokoro TTS
     try:
-        from services.tts_service import speak_async
+        from final_fyp_aarvis.services.tts_service import speak_async
         await speak_async(briefing_text)
     except Exception as tts_err:
         print(f"[Briefing] TTS error (non-fatal): {tts_err}")

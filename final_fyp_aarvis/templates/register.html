@@ -189,20 +189,15 @@
         }
 
         const PAIR_TOKEN = '{{ pair_token }}';
-        const QR_URL = '{{ qr_url or "" }}';
         let pairPollInterval = null;
 
         async function initQR() {
             try {
-                let finalUrl = QR_URL;
-                if (!finalUrl) {
-                    const res = await fetch(`/api/local-url?path=/mobile-connect%3Fpair%3D${PAIR_TOKEN}`);
-                    const data = await res.json();
-                    finalUrl = data.url;
-                }
-                document.getElementById('qrUrl').textContent = finalUrl;
+                const res = await fetch(`/api/local-url?path=/mobile-connect%3Fpair%3D${PAIR_TOKEN}`);
+                const data = await res.json();
+                document.getElementById('qrUrl').textContent = data.url;
                 new QRCode(document.getElementById('qrcode'), {
-                    text: finalUrl, width: 128, height: 128,
+                    text: data.url, width: 128, height: 128,
                     colorDark: '#1a1a2e', colorLight: '#ffffff',
                     correctLevel: QRCode.CorrectLevel.M
                 });
