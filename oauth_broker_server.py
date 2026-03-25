@@ -17,7 +17,20 @@ from services.google_oauth import build_auth_url, exchange_code_for_tokens
 app = FastAPI(title="AARVIS OAuth Broker")
 
 PAIR_TTL_SECONDS = int(os.getenv("OAUTH_PAIR_TTL_SECONDS", "600"))
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+# ── Auto-select OAuth broker configuration based on OAUTH_METHOD ──
+OAUTH_METHOD = os.getenv("OAUTH_METHOD", "vps").lower().strip()
+if OAUTH_METHOD == "ngrok":
+    PUBLIC_BASE_URL = os.getenv("NGROK_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("NGROK_OAUTH_REDIRECT_URI", "").strip()
+elif OAUTH_METHOD == "vps":
+    PUBLIC_BASE_URL = os.getenv("VPS_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("VPS_OAUTH_REDIRECT_URI", "").strip()
+else:
+    PUBLIC_BASE_URL = ""
+    GOOGLE_OAUTH_REDIRECT_URI = ""
+
+print(f"[OAuth Broker Config] Method: {OAUTH_METHOD} | Public Base: {PUBLIC_BASE_URL}")
 
 # {pair_token: {status, intent, expires_at, profile, tokens, claimed}}
 pair_sessions: dict[str, dict] = {}
@@ -56,6 +69,11 @@ def _resolve_public_base(request: Request) -> str:
 
 
 def _redirect_uri(request: Request) -> str:
+    # Check module-level GOOGLE_OAUTH_REDIRECT_URI first (set from OAUTH_METHOD)
+    if GOOGLE_OAUTH_REDIRECT_URI:
+        return GOOGLE_OAUTH_REDIRECT_URI
+    
+    # Fallback to env var if not set via OAUTH_METHOD
     forced = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
     if forced:
         return forced

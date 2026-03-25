@@ -122,7 +122,22 @@ templates = Jinja2Templates(directory="templates")
 # Session storage (in production, use Redis or database)
 sessions = {}
 
-OAUTH_BROKER_BASE_URL = os.getenv("OAUTH_BROKER_BASE_URL", "").strip().rstrip("/")
+# ── Auto-select OAuth broker based on OAUTH_METHOD ──
+OAUTH_METHOD = os.getenv("OAUTH_METHOD", "vps").lower().strip()
+if OAUTH_METHOD == "ngrok":
+    OAUTH_BROKER_BASE_URL = os.getenv("NGROK_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    PUBLIC_BASE_URL = os.getenv("NGROK_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("NGROK_OAUTH_REDIRECT_URI", "").strip()
+elif OAUTH_METHOD == "vps":
+    OAUTH_BROKER_BASE_URL = os.getenv("VPS_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    PUBLIC_BASE_URL = os.getenv("VPS_OAUTH_BROKER_URL", "").strip().rstrip("/")
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("VPS_OAUTH_REDIRECT_URI", "").strip()
+else:
+    OAUTH_BROKER_BASE_URL = ""
+    PUBLIC_BASE_URL = ""
+    GOOGLE_OAUTH_REDIRECT_URI = ""
+
+print(f"[OAuth Config] Method: {OAUTH_METHOD} | Broker: {OAUTH_BROKER_BASE_URL} | Redirect URI: {GOOGLE_OAUTH_REDIRECT_URI}")
 
 # Cross-device pairing state shared between PC and phone.
 # {pair_token: {"status": "pending"|"complete", "intent": "register"|"login", ...}}
@@ -381,6 +396,11 @@ _oauth_states: dict[str, str] = {}
 
 def _resolve_oauth_redirect_uri(request: Request) -> str:
     """Build callback URL from current host unless explicitly overridden."""
+    # Check module-level GOOGLE_OAUTH_REDIRECT_URI first (set from OAUTH_METHOD)
+    if GOOGLE_OAUTH_REDIRECT_URI:
+        return GOOGLE_OAUTH_REDIRECT_URI
+    
+    # Fallback to env var if not set via OAUTH_METHOD
     forced = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
     if forced:
         return forced
@@ -587,13 +607,14 @@ async def pair_status(pair_token: str):
 
 @app.get("/api/local-url")
 async def get_local_url(path: str = "/register"):
-    """Return the LAN URL of this server so phone clients can connect."""
-    public_base = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if public_base:
+    """Return the public/broker URL if available, otherwise fall back to localhost."""
+    # Use the module-level PUBLIC_BASE_URL which is set from OAUTH_METHOD
+    if PUBLIC_BASE_URL:
         if not path.startswith("/"):
             path = f"/{path}"
-        return {"url": f"{public_base}{path}"}
+        return {"url": f"{PUBLIC_BASE_URL}{path}"}
 
+    # Fallback: use local IP if no broker configured
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
