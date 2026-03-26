@@ -108,7 +108,7 @@
 
         /* ── Right: QR panel ── */
         .qr-panel {
-            width: 230px; flex-shrink: 0;
+            width: 40vh; flex-shrink: 0;
             background: rgba(255,255,255,.04);
             border-left: 1px solid rgba(255,255,255,.08);
             display: flex; flex-direction: column;
@@ -123,7 +123,15 @@
             font-size: 11px; color: rgba(255,255,255,.4);
             text-align: center; line-height: 1.6;
         }
-        #qrcode { border-radius: 10px; overflow: hidden; }
+        #qrcode { 
+            border-radius: 10px; 
+            overflow: hidden;
+            background: #fff;
+            padding: 10px;
+        }
+        #qrcode img, #qrcode canvas {
+            display: block;
+        }
         .qr-url { font-size: 9px; color: rgba(255,255,255,.2); text-align: center; word-break: break-all; }
         .pair-ok {
             display: none; text-align: center;
@@ -271,8 +279,9 @@
                     finalUrl = data.url;
                 }
                 document.getElementById('qrUrl').textContent = finalUrl;
+                const qrSize = Math.round(window.innerHeight / 3);
                 new QRCode(document.getElementById('qrcode'), {
-                    text: finalUrl, width: 150, height: 150,
+                    text: finalUrl, width: qrSize, height: qrSize,
                     colorDark: '#1a1a2e', colorLight: '#ffffff',
                     correctLevel: QRCode.CorrectLevel.M
                 });

@@ -80,7 +80,7 @@ except Exception as e:
     CALENDAR_AVAILABLE = False
     print(f"[DEBUG] ❌ Calendar integration not available: {e}")
 
-# Initialize face recognition
+# Initialize face recognition (InsightFace for detection)
 try:
     from insightface.app import FaceAnalysis
     print("[DEBUG] Initializing InsightFace...")
@@ -92,6 +92,59 @@ except Exception as e:
     FACE_RECOGNITION_AVAILABLE = False
     face_app = None
     print(f"[DEBUG] ❌ Face recognition not available: {e}")
+
+# ── Custom Face Model ────────────────────────────────────────────────────────
+try:
+    import torch
+    from torchvision import transforms
+    from PIL import Image
+    from test_training import FaceEmbeddingModel
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("[DEBUG] Activating Custom Nepali Face Backbone...")
+    
+    custom_face_model = FaceEmbeddingModel(embedding_size=512).to(device)
+    custom_face_model.load_state_dict(torch.load('face_embedding_backbone.pth', map_location=device))
+    custom_face_model.eval()
+    
+    custom_face_transform = transforms.Compose([
+        transforms.Resize((112, 112)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5]),
+    ])
+    USE_CUSTOM_FACE_MODEL = True
+    print("[DEBUG] ✅ Custom Face Model Loaded Successfully!")
+except Exception as e:
+    print(f"[DEBUG] ⚠️ Custom face model failed to load (will fallback to InsightFace): {e}")
+    USE_CUSTOM_FACE_MODEL = False
+
+def get_face_embedding(frame, face):
+    """
+    Given a raw BGR frame and an InsightFace detection object (`face`),
+    generates a 512-D unit-norm embedding.
+    Uses our custom fine-tuned PyTorch backbone if available, otherwise maps to InsightFace's default.
+    """
+    if USE_CUSTOM_FACE_MODEL:
+        try:
+            x1, y1, x2, y2 = face.bbox.astype(int)
+            h, w = frame.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            face_crop = frame[y1:y2, x1:x2]
+            face_pil = Image.fromarray(cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB))
+            
+            img_t = custom_face_transform(face_pil).unsqueeze(0).to(device)
+            with torch.no_grad():
+                # Our backbone already outputs L2-normalized vectors
+                emb = custom_face_model(img_t).cpu().numpy().squeeze()
+            return emb
+        except Exception as exc:
+            print(f"[DEBUG] Custom face extraction error {exc}, falling back.")
+            pass
+            
+    # Fallback to default InsightFace L2-normalized embedding
+    return face.embedding / np.linalg.norm(face.embedding)
 
 # Face database
 FACE_DB_FILE = "face_database.pkl"
@@ -137,7 +190,7 @@ else:
     PUBLIC_BASE_URL = ""
     GOOGLE_OAUTH_REDIRECT_URI = ""
 
-print(f"[OAuth Config] Method: {OAUTH_METHOD} | Broker: {OAUTH_BROKER_BASE_URL} | Redirect URI: {GOOGLE_OAUTH_REDIRECT_URI}")
+print(f"[OAuth Config] Method: {OAUTH_METHOD} | Broker: {OAUTH_BROKER_BASE_URL}")
 
 # Cross-device pairing state shared between PC and phone.
 # {pair_token: {"status": "pending"|"complete", "intent": "register"|"login", ...}}
@@ -395,16 +448,7 @@ _oauth_states: dict[str, str] = {}
 
 
 def _resolve_oauth_redirect_uri(request: Request) -> str:
-    """Build callback URL from current host unless explicitly overridden."""
-    # Check module-level GOOGLE_OAUTH_REDIRECT_URI first (set from OAUTH_METHOD)
-    if GOOGLE_OAUTH_REDIRECT_URI:
-        return GOOGLE_OAUTH_REDIRECT_URI
-    
-    # Fallback to env var if not set via OAUTH_METHOD
-    forced = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
-    if forced:
-        return forced
-
+    """Build callback URL from current host (used for PC browser flows)."""
     forwarded_proto = request.headers.get("x-forwarded-proto")
     forwarded_host = request.headers.get("x-forwarded-host")
     scheme = forwarded_proto or request.url.scheme
@@ -412,12 +456,18 @@ def _resolve_oauth_redirect_uri(request: Request) -> str:
 
     # Google blocks OAuth callbacks on private/LAN IPs for web client flows.
     host_only = host.split(":", 1)[0]
+    
+    # If the user is on localhost, this is perfectly fine for Google
+    if host_only in ("localhost", "127.0.0.1", "[::1]"):
+        return f"{scheme}://{host}/auth/google/callback"
+
+    # If it's a private IP (e.g., 192.168.x.x), we must raise an error to trigger the mobile fallback
     ip_obj = None
     try:
         ip_obj = ipaddress.ip_address(host_only)
     except ValueError:
-        # Non-IP hosts (e.g. localhost or domain) are fine.
         ip_obj = None
+
     if ip_obj and ip_obj.is_private and not ip_obj.is_loopback:
         raise ValueError("private_ip_callback_blocked")
 
@@ -648,8 +698,8 @@ async def verify_face(request: Request):
         if len(faces) == 0:
             return {"detected": False, "message": "No face detected"}
         
-        # Get face embedding
-        test_emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+        # Get face embedding using custom backbone or fallback
+        test_emb = get_face_embedding(frame, faces[0])
         
         # Check against all registered users
         best_match = None
@@ -709,8 +759,8 @@ async def process_face(request: Request):
         if len(faces) == 0:
             return {"error": "No face detected"}
         
-        # Get normalized embedding
-        embedding = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+        # Get custom normalized embedding
+        embedding = get_face_embedding(frame, faces[0])
         
         return {"embedding": embedding.tolist()}
     
@@ -742,8 +792,8 @@ async def face_login(request: Request, response: Response):
         if len(faces) == 0:
             return {"success": False, "message": "No face detected"}
         
-        # Get face embedding
-        test_emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+        # Get face embedding using custom model or fallback
+        test_emb = get_face_embedding(frame, faces[0])
         
         # Check against all registered users
         best_match = None
@@ -828,7 +878,7 @@ async def face_enroll(request: Request, session_token: Optional[str] = Cookie(No
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             faces = face_app.get(frame)
             if faces:
-                emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+                emb = get_face_embedding(frame, faces[0])
                 embeddings.append(emb)
         except Exception:
             continue
