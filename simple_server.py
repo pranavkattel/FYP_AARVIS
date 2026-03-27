@@ -20,6 +20,9 @@ import numpy as np
 import base64
 import pickle
 import os
+import time
+import hmac
+import hashlib
 
 try:
     from dotenv import load_dotenv
@@ -33,7 +36,7 @@ from database import (
     create_google_user, get_user_by_google_id, get_user_google_tokens, update_google_tokens,
     get_all_users, delete_user_by_id, admin_update_user,
 )
-from services.google_oauth import build_auth_url, exchange_code_for_tokens
+from services.google_oauth import build_auth_url_with_verifier, exchange_code_for_tokens
 from langchain_core.messages import HumanMessage, AIMessage
 
 # ── Server-side STT via faster_whisper (shared with CLI) ──
@@ -174,6 +177,71 @@ templates = Jinja2Templates(directory="templates")
 
 # Session storage (in production, use Redis or database)
 sessions = {}
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "86400"))
+SESSION_SIGNING_SECRET = os.getenv("SESSION_SIGNING_SECRET", os.getenv("SECRET_KEY", "change-me-session-secret"))
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    pad = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(raw + pad)
+
+
+def _issue_session_token(username: str) -> str:
+    # Prefix helps distinguish signed stateless session tokens from old random tokens.
+    payload = json.dumps({"u": username, "iat": int(time.time())}, separators=(",", ":")).encode("utf-8")
+    payload_b64 = _b64url_encode(payload)
+    sig = hmac.new(SESSION_SIGNING_SECRET.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    token = f"s1.{payload_b64}.{_b64url_encode(sig)}"
+    sessions[token] = username
+    return token
+
+
+def _resolve_session_user(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+
+    user = sessions.get(token)
+    if user:
+        return user
+
+    if not token.startswith("s1."):
+        return None
+
+    try:
+        _, payload_b64, sig_b64 = token.split(".", 2)
+        expected_sig = hmac.new(
+            SESSION_SIGNING_SECRET.encode("utf-8"),
+            payload_b64.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        actual_sig = _b64url_decode(sig_b64)
+        if not hmac.compare_digest(expected_sig, actual_sig):
+            return None
+
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        username = payload.get("u")
+        issued = int(payload.get("iat", 0))
+        if not username or issued <= 0:
+            return None
+        if int(time.time()) - issued > SESSION_TTL_SECONDS:
+            return None
+        return username
+    except Exception:
+        return None
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        httponly=True,
+        max_age=SESSION_TTL_SECONDS,
+        samesite="lax",
+    )
 
 # ── Auto-select OAuth broker based on OAUTH_METHOD ──
 OAUTH_METHOD = os.getenv("OAUTH_METHOD", "vps").lower().strip()
@@ -243,8 +311,7 @@ def _create_local_session_from_google_claim(claim: dict, intent: str) -> dict:
     if not user:
         raise RuntimeError("failed to resolve local user after broker claim")
 
-    token = secrets.token_urlsafe(32)
-    sessions[token] = user["username"]
+    token = _issue_session_token(user["username"])
 
     has_face = user["username"] in face_users_db and len(face_users_db[user["username"]]) > 0
     if intent == "register":
@@ -277,7 +344,7 @@ class LoginRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, session_token: Optional[str] = Cookie(None)):
     # Check if user is logged in
-    if not session_token or session_token not in sessions:
+    if not _resolve_session_user(session_token):
         return RedirectResponse(url="/login", status_code=302)
     
     return templates.TemplateResponse("index.html", {"request": request})
@@ -384,17 +451,10 @@ async def register(user: RegisterRequest, response: Response):
             print(f"[DEBUG] Saved {len(user.face_embeddings)} face embeddings for {user.username}")
         
         # Create session
-        token = secrets.token_urlsafe(32)
-        sessions[token] = user.username
+        token = _issue_session_token(user.username)
         
         # Set cookie in response
-        response.set_cookie(
-            key="session_token",
-            value=token,
-            httponly=True,
-            max_age=86400,  # 24 hours
-            samesite="lax"
-        )
+        _set_session_cookie(response, token)
         
         return {
             "message": "User created successfully",
@@ -415,17 +475,10 @@ async def login(credentials: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     
     # Create session
-    token = secrets.token_urlsafe(32)
-    sessions[token] = credentials.username
+    token = _issue_session_token(credentials.username)
     
     # Set cookie in response
-    response.set_cookie(
-        key="session_token",
-        value=token,
-        httponly=True,
-        max_age=86400,  # 24 hours
-        samesite="lax"
-    )
+    _set_session_cookie(response, token)
     
     return {
         "message": "Login successful",
@@ -449,6 +502,11 @@ _oauth_states: dict[str, str] = {}
 
 def _resolve_oauth_redirect_uri(request: Request) -> str:
     """Build callback URL from current host (used for PC browser flows)."""
+    # If explicitly configured, always honor the public callback.
+    # This is required for phone QR flows because Google blocks private/LAN callbacks.
+    if GOOGLE_OAUTH_REDIRECT_URI:
+        return GOOGLE_OAUTH_REDIRECT_URI
+
     forwarded_proto = request.headers.get("x-forwarded-proto")
     forwarded_host = request.headers.get("x-forwarded-host")
     scheme = forwarded_proto or request.url.scheme
@@ -493,11 +551,29 @@ async def google_auth_start(request: Request, intent: str = "register", pair: st
         )
 
     state = secrets.token_urlsafe(16)
-    _oauth_states[state] = {"intent": intent, "redirect_uri": redirect_uri, "pair": pair}
     try:
-        auth_url = build_auth_url(state=state, redirect_uri=redirect_uri)
+        auth_url, code_verifier = build_auth_url_with_verifier(state=state, redirect_uri=redirect_uri)
+        _oauth_states[state] = {
+            "intent": intent,
+            "redirect_uri": redirect_uri,
+            "pair": pair,
+            "code_verifier": code_verifier,
+        }
     except FileNotFoundError as exc:
+        if pair:
+            return RedirectResponse(
+                url=f"/mobile-connect?pair={pair}&error=oauth_start_failed",
+                status_code=302,
+            )
         raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        print(f"[OAuth] auth start failed: {exc}")
+        if pair:
+            return RedirectResponse(
+                url=f"/mobile-connect?pair={pair}&error=oauth_start_failed",
+                status_code=302,
+            )
+        raise HTTPException(status_code=500, detail="Failed to start Google OAuth")
     return RedirectResponse(url=auth_url)
 
 
@@ -519,13 +595,15 @@ async def google_auth_callback(
     if isinstance(state_data, dict):
         intent = state_data.get("intent", "register")
         redirect_uri = state_data.get("redirect_uri")
+        code_verifier = state_data.get("code_verifier")
     else:
         # legacy / fallback
         intent = state_data
         redirect_uri = None
+        code_verifier = None
 
     try:
-        tokens, profile = exchange_code_for_tokens(code, redirect_uri=redirect_uri)
+        tokens, profile = exchange_code_for_tokens(code, redirect_uri=redirect_uri, code_verifier=code_verifier)
     except Exception as exc:
         print(f"[OAuth] Token exchange failed: {exc}")
         return RedirectResponse(url="/register?error=token_exchange_failed", status_code=302)
@@ -551,8 +629,7 @@ async def google_auth_callback(
         return RedirectResponse(url="/register?error=user_not_found", status_code=302)
 
     # Create a session
-    token = secrets.token_urlsafe(32)
-    sessions[token] = user["username"]
+    token = _issue_session_token(user["username"])
 
     # New users OR users without face enrolled go to face setup
     has_face = user["username"] in face_users_db and len(face_users_db[user["username"]]) > 0
@@ -572,25 +649,19 @@ async def google_auth_callback(
 
         mode = "face_on_pc" if needs_face_setup else "done_mobile"
         redirect = RedirectResponse(url=f"/pair-complete?mode={mode}", status_code=302)
-        redirect.set_cookie(key="session_token", value=token, httponly=True, max_age=86400, samesite="lax")
+        _set_session_cookie(redirect, token)
         return redirect
 
     redirect = RedirectResponse(url=dest, status_code=302)
-    redirect.set_cookie(
-        key="session_token",
-        value=token,
-        httponly=True,
-        max_age=86400,
-        samesite="lax",
-    )
+    _set_session_cookie(redirect, token)
     return redirect
 
 @app.get("/api/user")
 async def get_current_user(session_token: Optional[str] = Cookie(None)):
-    if not session_token or session_token not in sessions:
+    username = _resolve_session_user(session_token)
+    if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    username = sessions[session_token]
+
     user = get_user_by_username(username)
     
     if not user:
@@ -656,12 +727,25 @@ async def pair_status(pair_token: str):
     return resp
 
 @app.get("/api/local-url")
-async def get_local_url(path: str = "/register"):
+async def get_local_url(request: Request, path: str = "/register"):
     """Return the public/broker URL if available, otherwise fall back to localhost."""
-    # Use the module-level PUBLIC_BASE_URL which is set from OAUTH_METHOD
-    if PUBLIC_BASE_URL:
-        if not path.startswith("/"):
-            path = f"/{path}"
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    # When running locally (localhost/LAN), QR links should point back to this machine,
+    # not the public broker URL, otherwise phone and PC can end up on different servers.
+    req_host = request.headers.get("x-forwarded-host") or request.url.netloc
+    host_only = req_host.split(":", 1)[0].strip("[]")
+    prefer_local = host_only in ("localhost", "127.0.0.1", "::1")
+    if not prefer_local:
+        try:
+            ip_obj = ipaddress.ip_address(host_only)
+            prefer_local = ip_obj.is_private or ip_obj.is_loopback
+        except ValueError:
+            prefer_local = False
+
+    # Use configured public URL only when request is already on a public host.
+    if PUBLIC_BASE_URL and not prefer_local:
         return {"url": f"{PUBLIC_BASE_URL}{path}"}
 
     # Fallback: use local IP if no broker configured
@@ -744,6 +828,7 @@ async def process_face(request: Request):
     try:
         data = await request.json()
         image_data = data.get('image')
+        detect_only = bool(data.get('detect_only', False))
         
         if not image_data:
             return {"error": "No image provided"}
@@ -757,7 +842,29 @@ async def process_face(request: Request):
         faces = face_app.get(frame)
         
         if len(faces) == 0:
+            if detect_only:
+                return {"detected": False, "face_count": 0, "message": "No face detected"}
             return {"error": "No face detected"}
+
+        if detect_only:
+            face0 = faces[0]
+            x1, y1, x2, y2 = face0.bbox.astype(int)
+            h, w = frame.shape[:2]
+            bbox_w = max(1, x2 - x1)
+            bbox_h = max(1, y2 - y1)
+
+            # kps is typically [left_eye, right_eye, nose, left_mouth, right_mouth]
+            kps = face0.kps.tolist() if getattr(face0, "kps", None) is not None else None
+
+            return {
+                "detected": True,
+                "face_count": len(faces),
+                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "center": [round((x1 + x2) / 2, 2), round((y1 + y2) / 2, 2)],
+                "frame_size": [int(w), int(h)],
+                "face_ratio": round((bbox_w * bbox_h) / float(max(1, w * h)), 6),
+                "kps": kps,
+            }
         
         # Get custom normalized embedding
         embedding = get_face_embedding(frame, faces[0])
@@ -818,17 +925,10 @@ async def face_login(request: Request, response: Response):
                 return {"success": False, "message": "User not found in database"}
             
             # Create session (same as normal login)
-            token = secrets.token_urlsafe(32)
-            sessions[token] = best_match
+            token = _issue_session_token(best_match)
             
             # Set cookie in response
-            response.set_cookie(
-                key="session_token",
-                value=token,
-                httponly=True,
-                max_age=86400,  # 24 hours
-                samesite="lax"
-            )
+            _set_session_cookie(response, token)
             
             # Update face detection cache
             face_detection_cache[best_match] = datetime.now()
@@ -855,15 +955,20 @@ async def face_login(request: Request, response: Response):
         return {"success": False, "message": str(e)}
 
 @app.post("/api/face/enroll")
-async def face_enroll(request: Request, session_token: Optional[str] = Cookie(None), token: Optional[str] = None):
+async def face_enroll(
+    request: Request,
+    response: Response,
+    session_token: Optional[str] = Cookie(None),
+    token: Optional[str] = None,
+):
     """Enroll face for an already-logged-in user (e.g. after Google signup)."""
-    auth_token = session_token or token
-    if not auth_token or auth_token not in sessions:
+    # Prefer explicit query token (fresh from OAuth redirect) over potentially stale cookie.
+    auth_token = token or session_token
+    username = _resolve_session_user(auth_token)
+    if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if not FACE_RECOGNITION_AVAILABLE:
         return {"success": False, "message": "Face recognition not available"}
-
-    username = sessions[auth_token]
     data = await request.json()
     images = data.get("images", [])  # list of base64 frames
 
@@ -888,16 +993,17 @@ async def face_enroll(request: Request, session_token: Optional[str] = Cookie(No
 
     face_users_db[username] = embeddings
     save_face_database(face_users_db)
+    # Ensure browser gets an authenticated cookie even when auth came via token query param.
+    _set_session_cookie(response, auth_token)
     print(f"[DEBUG] Enrolled {len(embeddings)} face embeddings for {username}")
     return {"success": True, "embeddings_saved": len(embeddings)}
 
 @app.get("/api/face/check-cache")
 async def check_face_cache(session_token: Optional[str] = Cookie(None)):
     """Check if user was recently detected (within last 4 minutes)"""
-    if not session_token or session_token not in sessions:
+    username = _resolve_session_user(session_token)
+    if not username:
         return {"cached": False, "message": "Not authenticated"}
-    
-    username = sessions[session_token]
     
     if username in face_detection_cache:
         last_seen = face_detection_cache[username]
@@ -922,13 +1028,12 @@ async def websocket_endpoint(
     await websocket.accept()
 
     # Resolve authenticated user from existing sessions dict
-    auth_token = session_token or token
-    if not auth_token or auth_token not in sessions:
+    auth_token = token or session_token
+    username = _resolve_session_user(auth_token)
+    if not username:
         await websocket.send_json({"type": "error", "text": "Not authenticated"})
         await websocket.close()
         return
-
-    username = sessions[auth_token]
     user = get_user_by_username(username)  # from database.py
     if not user:
         await websocket.send_json({"type": "error", "text": "User not found"})

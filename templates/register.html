@@ -70,7 +70,7 @@
 
             <div id="oauthErr" class="oauth-err"></div>
 
-            <a href="/auth/google?intent=register" class="btn-google">
+            <a href="/auth/google?intent=register" class="btn-google" id="googleBtn">
                 <svg width="22" height="22" viewBox="0 0 48 48">
                     <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.2 33.3 29.6 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5 12.7 4.5 3.5 13.7 3.5 25S12.7 45.5 24 45.5c11 0 20.5-8 20.5-20.5 0-1.4-.1-2.7-.5-5z"/>
                     <path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 17 19.3 14 24 14c3.1 0 5.9 1.2 8 3.1l6-6C34.5 6.5 29.6 4.5 24 4.5c-7.6 0-14.2 4.3-17.7 10.2z"/>
@@ -199,6 +199,11 @@
                     const res = await fetch(`/api/local-url?path=/mobile-connect%3Fpair%3D${PAIR_TOKEN}`);
                     const data = await res.json();
                     finalUrl = data.url;
+                }
+                // Use the same broker/QR flow for PC button too, so both paths are identical.
+                const googleBtn = document.getElementById('googleBtn');
+                if (googleBtn) {
+                    googleBtn.href = finalUrl;
                 }
                 document.getElementById('qrUrl').textContent = finalUrl;
                 new QRCode(document.getElementById('qrcode'), {

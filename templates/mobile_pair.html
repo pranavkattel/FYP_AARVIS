@@ -137,6 +137,15 @@
                 const authBtn = document.getElementById('authBtn');
                 authBtn.disabled = false;
                 authBtn.innerHTML = 'Continue with Google';
+            } else if (err === 'oauth_start_failed') {
+                const errBox = document.getElementById('errBox');
+                errBox.style.display = 'block';
+                errBox.textContent = 'Google sign-in could not start on this device. Use PC fallback or verify OAuth credentials on the server.';
+                document.getElementById('pcFallbackBtn').style.display = 'flex';
+                document.getElementById('successBox').style.display = 'none';
+                const authBtn = document.getElementById('authBtn');
+                authBtn.disabled = false;
+                authBtn.innerHTML = 'Continue with Google';
             }
         })();
     </script>

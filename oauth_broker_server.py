@@ -5,6 +5,11 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 import secrets
 import os
+import time
+import json
+import base64
+import hmac
+import hashlib
 
 try:
     from dotenv import load_dotenv
@@ -12,7 +17,7 @@ try:
 except Exception:
     pass
 
-from services.google_oauth import build_auth_url, exchange_code_for_tokens
+from services.google_oauth import build_auth_url_with_verifier, exchange_code_for_tokens
 
 app = FastAPI(title="AARVIS OAuth Broker")
 
@@ -34,8 +39,52 @@ print(f"[OAuth Broker Config] Method: {OAUTH_METHOD} | Public Base: {PUBLIC_BASE
 
 # {pair_token: {status, intent, expires_at, profile, tokens, claimed}}
 pair_sessions: dict[str, dict] = {}
-# {state: pair_token}
-state_index: dict[str, str] = {}
+STATE_SIGNING_SECRET = os.getenv("OAUTH_STATE_SECRET", os.getenv("SECRET_KEY", "change-me-oauth-state-secret"))
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    pad = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(raw + pad)
+
+
+def _sign_state(payload: dict) -> str:
+    payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_bytes)
+    sig = hmac.new(STATE_SIGNING_SECRET.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    return f"{payload_b64}.{_b64url_encode(sig)}"
+
+
+def _decode_state(state_token: str) -> Optional[dict]:
+    try:
+        payload_b64, sig_b64 = state_token.split(".", 1)
+    except ValueError:
+        return None
+
+    expected_sig = hmac.new(
+        STATE_SIGNING_SECRET.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    actual_sig = _b64url_decode(sig_b64)
+
+    if not hmac.compare_digest(expected_sig, actual_sig):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+
+    issued = int(payload.get("ts", 0))
+    now = int(time.time())
+    if issued <= 0 or (now - issued) > PAIR_TTL_SECONDS:
+        return None
+
+    return payload
 
 
 class PairCreateRequest(BaseModel):
@@ -159,11 +208,52 @@ async def auth_google_start(request: Request, pair: str = "", intent: str = "reg
     if intent not in ("register", "login"):
         intent = entry.get("intent", "register")
 
-    state = secrets.token_urlsafe(24)
-    state_index[state] = pair
     redirect_uri = _redirect_uri(request)
+    code_verifier = secrets.token_urlsafe(64)
+    state_payload = {
+        "pair": pair,
+        "intent": intent,
+        "redirect_uri": redirect_uri,
+        "cv": code_verifier,
+        "ts": int(time.time()),
+    }
+    state = _sign_state(state_payload)
 
-    auth_url = build_auth_url(state=state, redirect_uri=redirect_uri)
+    try:
+        auth_url, _ = build_auth_url_with_verifier(
+            state=state,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+        )
+    except FileNotFoundError as exc:
+        msg = str(exc)
+        html = f"""
+<!doctype html>
+<html>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>OAuth setup required</title>
+<style>
+body {{ font-family: Arial, sans-serif; padding: 28px; background: #0f172a; color: #e2e8f0; }}
+.card {{ max-width: 560px; margin: 40px auto; background: #111827; padding: 24px; border-radius: 12px; border: 1px solid #334155; }}
+.muted {{ color: #94a3b8; font-size: 14px; line-height: 1.65; }}
+pre {{ background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 12px; overflow: auto; color: #cbd5e1; }}
+</style>
+</head>
+<body>
+    <div class='card'>
+        <h2 style='margin-top:0'>Google OAuth not configured on VPS</h2>
+        <p class='muted'>The broker could not find OAuth client credentials, so sign-in cannot start yet.</p>
+        <pre>{msg}</pre>
+        <p class='muted'>Fix on VPS: place credentials_web.json in the project root, or set GOOGLE_OAUTH_CREDENTIALS_FILE to the full file path and restart the broker.</p>
+    </div>
+</body>
+</html>
+"""
+        return HTMLResponse(html, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"error": f"oauth_start_failed: {exc}"}, status_code=500)
     return RedirectResponse(url=auth_url)
 
 
@@ -182,13 +272,21 @@ async def auth_google_callback(
     if not code or not state:
         return JSONResponse({"error": "missing_code_or_state"}, status_code=400)
 
-    pair = state_index.pop(state, "")
+    state_data = _decode_state(state or "")
+    if not state_data:
+        return JSONResponse({"error": "invalid_or_expired_state"}, status_code=400)
+
+    pair = state_data.get("pair", "")
     entry = pair_sessions.get(pair)
     if not pair or not entry:
         return JSONResponse({"error": "pair_expired"}, status_code=400)
 
     try:
-        tokens, profile = exchange_code_for_tokens(code, redirect_uri=_redirect_uri(request))
+        tokens, profile = exchange_code_for_tokens(
+            code,
+            redirect_uri=state_data.get("redirect_uri") or _redirect_uri(request),
+            code_verifier=state_data.get("cv"),
+        )
     except Exception as exc:
         return JSONResponse({"error": f"token_exchange_failed: {exc}"}, status_code=400)
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Set Up Face Login – AARVIS</title>
+    <title>Set Up Face Login - AARVIS</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -17,7 +17,7 @@
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 20px;
             padding: 40px 36px;
-            width: 100%; max-width: 480px;
+            width: 100%; max-width: 540px;
             text-align: center;
             backdrop-filter: blur(10px);
         }
@@ -34,6 +34,74 @@
             position: absolute; bottom: 0; left: 0; right: 0;
             background: rgba(0,0,0,0.55); padding: 10px;
             font-size: 0.85rem; color: #fff;
+        }
+        .stage-pill {
+            display: inline-block;
+            margin-bottom: 14px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+            border: 1px solid rgba(255,255,255,.22);
+            color: #cbd5e1;
+            background: rgba(15, 23, 42, .55);
+        }
+
+        .guidance {
+            margin-bottom: 14px;
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.12);
+            border-radius: 12px;
+            padding: 12px;
+            font-size: .88rem;
+            color: #d1d5db;
+            text-align: left;
+            line-height: 1.55;
+        }
+
+        .checklist {
+            margin-top: 14px;
+            margin-bottom: 18px;
+            text-align: left;
+            display: grid;
+            gap: 8px;
+        }
+
+        .check-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 10px;
+            border-radius: 10px;
+            background: rgba(255,255,255,.03);
+            border: 1px solid rgba(255,255,255,.08);
+            color: #cbd5e1;
+            font-size: .84rem;
+        }
+
+        .check-dot {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 800;
+            background: rgba(148, 163, 184, .28);
+            color: #0f172a;
+            flex-shrink: 0;
+        }
+
+        .check-item.done {
+            border-color: rgba(74, 222, 128, .55);
+            background: rgba(74, 222, 128, .12);
+            color: #e2ffe8;
+        }
+
+        .check-item.done .check-dot {
+            background: #4ade80;
         }
         .progress-bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; margin: 4px 0 0; }
         .progress-fill { height: 100%; border-radius: 3px; background: #4ade80; transition: width 0.3s; }
@@ -59,7 +127,9 @@
 <body>
 <div class="card">
     <h1>&#128247; Set Up Face Login</h1>
-    <p class="sub">Let AARVIS recognise you automatically.<br>Look at the camera and we'll capture your face.</p>
+    <p class="sub">Face setup with liveness-like motion checks.<br>First detect your face, then complete movement prompts.</p>
+
+    <div class="stage-pill" id="stagePill">Stage: Waiting for Camera</div>
 
     <div id="videoWrap">
         <video id="faceVideo" autoplay muted playsinline></video>
@@ -69,10 +139,21 @@
         </div>
     </div>
 
+    <div class="guidance" id="guideBox">Press Start Camera. Keep your face centered in the frame.</div>
+
+    <div class="checklist" id="checklist">
+        <div class="check-item" id="check-face"><span class="check-dot">1</span><span>Face detected</span></div>
+        <div class="check-item" id="check-up"><span class="check-dot">2</span><span>Look up</span></div>
+        <div class="check-item" id="check-down"><span class="check-dot">3</span><span>Look down</span></div>
+        <div class="check-item" id="check-left"><span class="check-dot">4</span><span>Look left</span></div>
+        <div class="check-item" id="check-right"><span class="check-dot">5</span><span>Look right</span></div>
+    </div>
+
     <div id="msg"></div>
     <div id="success">&#10003; Face enrolled! Redirecting to your mirror…</div>
 
-    <button class="btn btn-primary" id="startBtn" onclick="startCapture()">Start Camera &amp; Capture</button>
+    <button class="btn btn-primary" id="startBtn" onclick="startCapture()">Start Camera</button>
+    <button class="btn btn-primary" id="enrollBtn" onclick="startEnrollment()" disabled style="display:none;">Register Face Now</button>
     <button class="btn btn-secondary" onclick="skip()">Skip for now</button>
 </div>
 
@@ -83,9 +164,36 @@
     if (urlToken) { localStorage.setItem('sessionToken', urlToken); }
 
     const TOTAL_FRAMES = 12;
+    const MAX_CAPTURE_ATTEMPTS = 45;
+    const SAMPLE_INTERVAL_MS = 420;
+    const DETECT_INTERVAL_MS = 350;
+
+    const motionState = {
+        faceDetected: false,
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        baseline: null,
+    };
+
     let stream = null;
     let captured = [];
     let capturing = false;
+    let detectTimer = null;
+    let lastFrameData = null;
+
+    async function detectFrame(frameData) {
+        const res = await fetch('/api/face/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ image: frameData, detect_only: true })
+        });
+        let data = {};
+        try { data = await res.json(); } catch (_) {}
+        return { ok: res.ok, data };
+    }
 
     async function startCapture() {
         const btn = document.getElementById('startBtn');
@@ -97,38 +205,175 @@
             vid.srcObject = stream;
             await vid.play();
             document.getElementById('videoWrap').style.display = 'block';
-            btn.style.display = 'none';
-            captured = [];
-            capturing = true;
-            setOverlay('Look straight at the camera…');
-            captureLoop(vid);
+            setStage('Detecting face');
+            setGuide('Hold still and center your face in the camera frame.');
+            setOverlay('Initializing face detection…');
+            detectTimer = setInterval(() => detectionLoop(vid), DETECT_INTERVAL_MS);
         } catch(e) {
             btn.disabled = false;
             setMsg('Camera access denied. Please allow camera and try again.');
         }
     }
 
-    async function captureLoop(vid) {
-        while (captured.length < TOTAL_FRAMES && capturing) {
+    async function detectionLoop(vid) {
+        const frameData = snapFrame(vid);
+        lastFrameData = frameData;
+        try {
+            const { ok, data } = await detectFrame(frameData);
+
+            if (!ok || !data.detected) {
+                setOverlay('No face detected');
+                setGuide('Make sure your full face is visible, with good light.');
+                return;
+            }
+
+            if (!motionState.faceDetected) {
+                motionState.faceDetected = true;
+                markDone('check-face');
+                motionState.baseline = {
+                    center: data.center,
+                    ratio: data.face_ratio,
+                };
+                setStage('Motion checks');
+                setGuide('Great. Now follow prompts: look up, down, left, then right.');
+            }
+
+            evaluateMotion(data);
+            refreshMotionPrompt();
+
+            if (allChecksPassed()) {
+                clearInterval(detectTimer);
+                detectTimer = null;
+                setStage('Ready to register');
+                setOverlay('Checks complete');
+                setGuide('Motion checks passed. Click Register Face Now.');
+                document.getElementById('enrollBtn').disabled = false;
+                document.getElementById('enrollBtn').style.display = 'block';
+                document.getElementById('startBtn').style.display = 'none';
+            }
+        } catch (e) {
+            setOverlay('Detection error');
+            setMsg('Face detection check failed. Please try again.');
+        }
+    }
+
+    function evaluateMotion(data) {
+        if (!motionState.baseline || !data.center || !data.frame_size) return;
+
+        const [cx, cy] = data.center;
+        const [fw, fh] = data.frame_size;
+        const [baseX, baseY] = motionState.baseline.center;
+
+        const dxN = (cx - baseX) / Math.max(1, fw);
+        const dyN = (cy - baseY) / Math.max(1, fh);
+
+        // Thresholds tuned for normal phone/laptop webcam movement.
+        if (!motionState.up && dyN > 0.035) {
+            motionState.up = true;
+            markDone('check-up');
+        }
+        if (!motionState.down && dyN < -0.035) {
+            motionState.down = true;
+            markDone('check-down');
+        }
+        if (!motionState.left && dxN > 0.045) {
+            motionState.left = true;
+            markDone('check-left');
+        }
+        if (!motionState.right && dxN < -0.045) {
+            motionState.right = true;
+            markDone('check-right');
+        }
+    }
+
+    function refreshMotionPrompt() {
+        if (!motionState.up) {
+            setOverlay('Please look up');
+            return;
+        }
+        if (!motionState.down) {
+            setOverlay('Please look down');
+            return;
+        }
+        if (!motionState.left) {
+            setOverlay('Please look left');
+            return;
+        }
+        if (!motionState.right) {
+            setOverlay('Please look right');
+            return;
+        }
+    }
+
+    function allChecksPassed() {
+        return motionState.faceDetected && motionState.up && motionState.down && motionState.left && motionState.right;
+    }
+
+    async function startEnrollment() {
+        if (!allChecksPassed()) {
+            setMsg('Complete all face checks first.');
+            return;
+        }
+
+        const vid = document.getElementById('faceVideo');
+        document.getElementById('enrollBtn').disabled = true;
+        captured = [];
+        capturing = true;
+        setStage('Capturing frames');
+        setGuide('Stay still and blink naturally while we capture secure face frames.');
+        setOverlay('Capturing… 0/' + TOTAL_FRAMES);
+
+        let attempts = 0;
+        while (captured.length < TOTAL_FRAMES && capturing && attempts < MAX_CAPTURE_ATTEMPTS) {
+            attempts += 1;
             const b64 = snapFrame(vid);
-            captured.push(b64);
+            try {
+                const { ok, data } = await detectFrame(b64);
+                if (ok && data.detected) {
+                    captured.push(b64);
+                    setGuide('Great. Keep looking naturally at the camera while we capture.');
+                } else {
+                    setGuide('Face temporarily lost. Re-center your face and hold still.');
+                }
+            } catch (_) {
+                // Ignore transient detection call errors; continue sampling.
+            }
             const pct = Math.round((captured.length / TOTAL_FRAMES) * 100);
             document.getElementById('progressFill').style.width = pct + '%';
             setOverlay(`Capturing… ${captured.length}/${TOTAL_FRAMES}`);
-            await sleep(400);
+            await sleep(SAMPLE_INTERVAL_MS);
         }
-        if (capturing) { submitFrames(); }
+
+        if (captured.length < Math.max(6, Math.floor(TOTAL_FRAMES * 0.6))) {
+            capturing = false;
+            setMsg('Face was not consistently visible during capture. Please try again with better light.');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('enrollBtn').disabled = true;
+            document.getElementById('enrollBtn').style.display = 'none';
+            setStage('Detection needed');
+            setOverlay('Capture not stable');
+            return;
+        }
+
+        if (capturing) {
+            submitFrames();
+        }
     }
 
     function snapFrame(vid) {
         const c = document.createElement('canvas');
-        c.width = 320; c.height = 240;
-        c.getContext('2d').drawImage(vid, 0, 0, 320, 240);
-        return c.toDataURL('image/jpeg', 0.7);
+        const w = Math.min(640, vid.videoWidth || 640);
+        const h = Math.min(480, vid.videoHeight || 480);
+        c.width = w;
+        c.height = h;
+        c.getContext('2d').drawImage(vid, 0, 0, w, h);
+        return c.toDataURL('image/jpeg', 0.85);
     }
 
     async function submitFrames() {
         capturing = false;
+        setStage('Processing');
         setOverlay('Processing…');
         try {
             const token = localStorage.getItem('sessionToken') || '';
@@ -157,6 +402,7 @@
                     setMsg(retryData.message || 'Could not detect a face. Please try again.');
                     document.getElementById('startBtn').disabled = false;
                     document.getElementById('startBtn').style.display = 'block';
+                    document.getElementById('enrollBtn').style.display = 'none';
                 }
                 return;
             }
@@ -172,23 +418,39 @@
                 setMsg(data.message || 'Could not detect a face. Please try again.');
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('startBtn').style.display = 'block';
+                document.getElementById('enrollBtn').style.display = 'none';
             }
         } catch(e) {
             stopStream();
             setMsg('Error saving face. You can skip and set it up later.');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('enrollBtn').style.display = 'none';
         }
     }
 
     function stopStream() {
         capturing = false;
+        if (detectTimer) {
+            clearInterval(detectTimer);
+            detectTimer = null;
+        }
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     }
 
     function skip() { window.location.href = '/'; }
+    function setStage(t) { document.getElementById('stagePill').textContent = 'Stage: ' + t; }
+    function setGuide(t) { document.getElementById('guideBox').textContent = t; }
     function setMsg(t) { document.getElementById('msg').textContent = t; }
     function setOverlay(t) { document.getElementById('overlayText').textContent = t; }
+    function markDone(id) {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains('done')) {
+            el.classList.add('done');
+            const dot = el.querySelector('.check-dot');
+            if (dot) dot.textContent = '✓';
+        }
+    }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 </script>
 </body>
