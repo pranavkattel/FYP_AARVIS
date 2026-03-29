@@ -15,7 +15,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 model = ChatGoogleGenerativeAI(
     model="gemini-3-flash-preview",
     temperature=0.7,
-    google_api_key=os.getenv("GOOGLE_API_KEY", "AIzaSyAgmDcm8g_RbK0PJ4PIilJFJuxLJYzM2s0")
+    google_api_key=os.getenv("GOOGLE_API_KEY", "AIzaSyC_J-xUE_wuw1asRszGTOsUC9DTWSp2N58")
 ).bind_tools(tools)
 
 SYSTEM_PROMPT_TEMPLATE = """/no_think
