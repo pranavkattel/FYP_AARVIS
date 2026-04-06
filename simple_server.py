@@ -1536,7 +1536,7 @@ async def trigger_briefing(session_token: Optional[str] = Cookie(None)):
     )
 
     # Fetch weather
-    weather_text = "Weather unavailable."
+    weather_text = "Weather unavailable." 
     try:
         API_KEY = "10428bba45b34ba8b4543622252612"
         location = user.get('location', 'Kathmandu')
