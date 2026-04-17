@@ -21,7 +21,19 @@ from services.google_oauth import build_auth_url_with_verifier, exchange_code_fo
 
 app = FastAPI(title="AARVIS OAuth Broker")
 
-PAIR_TTL_SECONDS = int(os.getenv("OAUTH_PAIR_TTL_SECONDS", "600"))
+
+def _safe_pair_ttl_seconds() -> int:
+    """Parse and clamp pair/state TTL to avoid accidental immediate expiry."""
+    raw = (os.getenv("OAUTH_PAIR_TTL_SECONDS", "600") or "600").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 600
+    # Keep OAuth windows practical while preventing pathological config values.
+    return max(120, min(value, 3600))
+
+
+PAIR_TTL_SECONDS = _safe_pair_ttl_seconds()
 
 # ── Auto-select OAuth broker configuration based on OAUTH_METHOD ──
 OAUTH_METHOD = os.getenv("OAUTH_METHOD", "vps").lower().strip()
@@ -39,6 +51,8 @@ print(f"[OAuth Broker Config] Method: {OAUTH_METHOD} | Public Base: {PUBLIC_BASE
 
 # {pair_token: {status, intent, expires_at, profile, tokens, claimed}}
 pair_sessions: dict[str, dict] = {}
+# {state_token: {payload, expires_at}}
+oauth_states: dict[str, dict] = {}
 STATE_SIGNING_SECRET = os.getenv("OAUTH_STATE_SECRET", os.getenv("SECRET_KEY", "change-me-oauth-state-secret"))
 
 
@@ -87,6 +101,75 @@ def _decode_state(state_token: str) -> Optional[dict]:
     return payload
 
 
+def _decode_state_allow_expired(state_token: str) -> Optional[dict]:
+    """Decode signed state while ignoring timestamp expiry (for retry recovery only)."""
+    try:
+        payload_b64, sig_b64 = state_token.split(".", 1)
+    except ValueError:
+        return None
+
+    expected_sig = hmac.new(
+        STATE_SIGNING_SECRET.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    try:
+        actual_sig = _b64url_decode(sig_b64)
+    except Exception:
+        return None
+
+    if not hmac.compare_digest(expected_sig, actual_sig):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _ensure_pair_entry(pair: str, intent: str = "register") -> dict:
+    """Recreate an expired/missing pair entry so OAuth can continue safely."""
+    if pair in pair_sessions:
+        return pair_sessions[pair]
+
+    expires_at = _utc_now() + timedelta(seconds=PAIR_TTL_SECONDS)
+    pair_sessions[pair] = {
+        "status": "pending",
+        "intent": intent if intent in ("register", "login") else "register",
+        "expires_at": expires_at,
+        "profile": None,
+        "tokens": None,
+        "claimed": False,
+    }
+    return pair_sessions[pair]
+
+
+def _issue_oauth_state(payload: dict) -> str:
+    """Create an opaque OAuth state token backed by server memory."""
+    state_token = secrets.token_urlsafe(32)
+    oauth_states[state_token] = {
+        "payload": payload,
+        "expires_at": _utc_now() + timedelta(seconds=PAIR_TTL_SECONDS),
+    }
+    return state_token
+
+
+def _consume_oauth_state(state_token: str) -> Optional[dict]:
+    """One-time state consumption for callback validation."""
+    entry = oauth_states.pop(state_token, None)
+    if not entry:
+        return None
+
+    expires_at = entry.get("expires_at")
+    if expires_at and expires_at < _utc_now():
+        return None
+
+    payload = entry.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
 class PairCreateRequest(BaseModel):
     intent: str = "register"
 
@@ -104,6 +187,14 @@ def _cleanup_expired() -> None:
     dead = [token for token, entry in pair_sessions.items() if entry.get("expires_at") and entry["expires_at"] < now]
     for token in dead:
         pair_sessions.pop(token, None)
+
+    dead_states = [
+        token
+        for token, entry in oauth_states.items()
+        if entry.get("expires_at") and entry["expires_at"] < now
+    ]
+    for token in dead_states:
+        oauth_states.pop(token, None)
 
 
 def _resolve_public_base(request: Request) -> str:
@@ -217,6 +308,8 @@ async def auth_google_start(request: Request, pair: str = "", intent: str = "reg
         "cv": code_verifier,
         "ts": int(time.time()),
     }
+    # Use signed state as primary so callback validation survives process restarts.
+    # Callback also supports opaque in-memory state for backward compatibility.
     state = _sign_state(state_payload)
 
     try:
@@ -272,14 +365,37 @@ async def auth_google_callback(
     if not code or not state:
         return JSONResponse({"error": "missing_code_or_state"}, status_code=400)
 
-    state_data = _decode_state(state or "")
+    # Prefer opaque one-time state tokens, with signed-state fallback.
+    state_data = _consume_oauth_state(state or "")
     if not state_data:
-        return JSONResponse({"error": "invalid_or_expired_state"}, status_code=400)
+        state_data = _decode_state(state or "")
+    if not state_data:
+        # If the state is correctly signed but expired, transparently restart OAuth.
+        stale_state = _decode_state_allow_expired(state or "")
+        if stale_state:
+            pair = str(stale_state.get("pair", "") or "").strip()
+            intent = str(stale_state.get("intent", "register") or "register").strip()
+            if pair:
+                _ensure_pair_entry(pair, intent=intent)
+                return RedirectResponse(
+                    url=f"/auth/google/start?pair={pair}&intent={intent}",
+                    status_code=302,
+                )
+
+        return JSONResponse(
+            {
+                "error": "invalid_or_expired_state",
+                "hint": "restart_sign_in_and_use_a_fresh_qr",
+            },
+            status_code=400,
+        )
 
     pair = state_data.get("pair", "")
-    entry = pair_sessions.get(pair)
-    if not pair or not entry:
+    if not pair:
         return JSONResponse({"error": "pair_expired"}, status_code=400)
+
+    intent = str(state_data.get("intent", "register") or "register").strip()
+    entry = _ensure_pair_entry(pair, intent=intent)
 
     try:
         tokens, profile = exchange_code_for_tokens(
