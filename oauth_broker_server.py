@@ -146,6 +146,32 @@ def _ensure_pair_entry(pair: str, intent: str = "register") -> dict:
     return pair_sessions[pair]
 
 
+def _create_pair_session(intent: str = "register") -> tuple[str, datetime]:
+    """Create and store a fresh pair session for mobile OAuth continuation."""
+    normalized_intent = intent if intent in ("register", "login") else "register"
+    pair = secrets.token_urlsafe(24)
+    expires_at = _utc_now() + timedelta(seconds=PAIR_TTL_SECONDS)
+    pair_sessions[pair] = {
+        "status": "pending",
+        "intent": normalized_intent,
+        "expires_at": expires_at,
+        "profile": None,
+        "tokens": None,
+        "claimed": False,
+    }
+    return pair, expires_at
+
+
+def _extract_state_payload_unsafe(state_token: str) -> Optional[dict]:
+    """Best-effort state payload read without signature validation (for UX recovery only)."""
+    try:
+        payload_b64 = state_token.split(".", 1)[0]
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _issue_oauth_state(payload: dict) -> str:
     """Create an opaque OAuth state token backed by server memory."""
     state_token = secrets.token_urlsafe(32)
@@ -230,17 +256,7 @@ async def pair_create(body: PairCreateRequest, request: Request):
     _cleanup_expired()
 
     intent = body.intent if body.intent in ("register", "login") else "register"
-    pair = secrets.token_urlsafe(24)
-    expires_at = _utc_now() + timedelta(seconds=PAIR_TTL_SECONDS)
-
-    pair_sessions[pair] = {
-        "status": "pending",
-        "intent": intent,
-        "expires_at": expires_at,
-        "profile": None,
-        "tokens": None,
-        "claimed": False,
-    }
+    pair, expires_at = _create_pair_session(intent=intent)
 
     base = _resolve_public_base(request)
     mobile_url = f"{base}/mobile-connect?pair={pair}"
@@ -252,13 +268,16 @@ async def pair_create(body: PairCreateRequest, request: Request):
 
 
 @app.get("/mobile-connect", response_class=HTMLResponse)
-async def mobile_connect(request: Request, pair: str = ""):
+async def mobile_connect(request: Request, pair: str = "", error: str = ""):
     _cleanup_expired()
     entry = pair_sessions.get(pair)
     if not pair or not entry:
         return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>QR code expired. Please refresh on your main device and scan again.</h3>")
 
     intent = entry.get("intent", "register")
+    retry_note = ""
+    if error:
+        retry_note = "<p style='background:#1e293b;border:1px solid #334155;padding:10px;border-radius:8px;margin:12px 0;color:#cbd5e1;'>Your previous sign-in session expired. Please continue with Google again.</p>"
     html = f"""
 <!doctype html>
 <html>
@@ -276,6 +295,7 @@ body {{ font-family: Arial, sans-serif; padding: 28px; background: #0f172a; colo
 <body>
   <div class='card'>
     <h2 style='margin-top:0'>Google sign-in</h2>
+        {retry_note}
     <p>Continue Google sign-in from your phone.</p>
     <a class='btn' href='/auth/google/start?pair={pair}&intent={intent}'>Continue with Google</a>
     <p class='small'>After success, go back to your mirror device and continue face setup there.</p>
@@ -360,7 +380,8 @@ async def auth_google_callback(
     _cleanup_expired()
 
     if error:
-        return JSONResponse({"error": error}, status_code=400)
+        pair, _ = _create_pair_session("register")
+        return RedirectResponse(url=f"/mobile-connect?pair={pair}&error=oauth_error", status_code=302)
 
     if not code or not state:
         return JSONResponse({"error": "missing_code_or_state"}, status_code=400)
@@ -382,12 +403,20 @@ async def auth_google_callback(
                     status_code=302,
                 )
 
-        return JSONResponse(
-            {
-                "error": "invalid_or_expired_state",
-                "hint": "restart_sign_in_and_use_a_fresh_qr",
-            },
-            status_code=400,
+        unsafe_state = _extract_state_payload_unsafe(state or "") or {}
+        recovered_pair = str(unsafe_state.get("pair", "") or "").strip()
+        recovered_intent = str(unsafe_state.get("intent", "register") or "register").strip()
+
+        if recovered_pair and recovered_pair in pair_sessions:
+            return RedirectResponse(
+                url=f"/mobile-connect?pair={recovered_pair}&error=state_reset",
+                status_code=302,
+            )
+
+        fresh_pair, _ = _create_pair_session(recovered_intent)
+        return RedirectResponse(
+            url=f"/mobile-connect?pair={fresh_pair}&error=state_reset",
+            status_code=302,
         )
 
     pair = state_data.get("pair", "")
